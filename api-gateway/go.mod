@@ -3,6 +3,7 @@ module github.com/huzaifa678/SAAS-services
 go 1.25.6
 
 require (
+	github.com/MicahParks/keyfunc/v2 v2.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/swaggo/swag v1.16.6
 	golang.org/x/sync v0.19.0
