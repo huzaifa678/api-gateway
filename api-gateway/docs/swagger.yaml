@@ -1,0 +1,275 @@
+basePath: /
+definitions:
+  endpoint.ForwardResponseSwagger:
+    properties:
+      data: {}
+      error:
+        type: string
+      status:
+        type: integer
+    type: object
+host: localhost:9000
+info:
+  contact: {}
+  description: API Gateway for Auth, Subscription and Billing Services
+  title: SAAS API Gateway
+  version: "1.0"
+paths:
+  /api/auth/:
+    post:
+      consumes:
+      - application/json
+      - application/json
+      description: |-
+        Forwards GraphQL requests to the Auth Service
+        Forwards GraphQL requests to the Subscription Service
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        type: string
+      - description: GraphQL query payload
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: GraphQL query payload
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Subscription GraphQL endpoint
+      tags:
+      - Auth
+      - Subscription
+  /api/billing/{path}:
+    delete:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Billing Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic billing route path
+        in: path
+        name: path
+        type: string
+      - description: Billing request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Billing REST endpoint
+      tags:
+      - Billing
+    get:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Billing Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic billing route path
+        in: path
+        name: path
+        type: string
+      - description: Billing request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Billing REST endpoint
+      tags:
+      - Billing
+    post:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Billing Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic billing route path
+        in: path
+        name: path
+        type: string
+      - description: Billing request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Billing REST endpoint
+      tags:
+      - Billing
+    put:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Billing Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic billing route path
+        in: path
+        name: path
+        type: string
+      - description: Billing request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Billing REST endpoint
+      tags:
+      - Billing
+  /api/subscription/:
+    post:
+      consumes:
+      - application/json
+      - application/json
+      description: |-
+        Forwards GraphQL requests to the Auth Service
+        Forwards GraphQL requests to the Subscription Service
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        type: string
+      - description: GraphQL query payload
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: GraphQL query payload
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Subscription GraphQL endpoint
+      tags:
+      - Auth
+      - Subscription
+swagger: "2.0"

@@ -1,0 +1,31 @@
+app:
+  name: api-gateway
+  env: dev
+  port: 9000
+
+services:
+  auth:
+    url: http://localhost:8080
+  subscription:
+    url: http://localhost:8081
+  billing:
+    url:  http://localhost:8082
+
+keycloak:
+  jwksURL: http://localhost:8180/realms/saas/protocol/openid-connect/certs
+
+redis:
+  url: localhost:6379
+
+jwt:
+  secret: supersecret
+
+cors:
+  allowedOrigins:
+    - http://localhost:3000   #configuration for possible frontend client
+    - http://localhost:5173
+
+circuitBreaker:
+  timeoutMs: 5000
+  errorThreshold: 50
+  resetTimeoutMs: 10000
