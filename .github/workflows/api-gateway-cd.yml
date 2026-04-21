@@ -1,7 +1,8 @@
 name: api-gateway CD
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [test, main]
 
 concurrency:
   group: cd-values-prod
@@ -38,6 +39,17 @@ jobs:
           context: api-gateway
           push: true
           tags: ${{ steps.ecr.outputs.url }}:${{ github.sha }}
+
+      - name: Set environment
+        id: vars
+        run: |
+          if [[ "${GITHUB_REF##*/}" == "test" ]]; then
+            echo "file=values-test.yaml" >> $GITHUB_OUTPUT
+            echo "env=test" >> $GITHUB_OUTPUT
+          else
+            echo "file=values-prod.yaml" >> $GITHUB_OUTPUT
+            echo "env=prod" >> $GITHUB_OUTPUT
+          fi
 
       - name: update ArgoCD values-prod.yaml
         env:

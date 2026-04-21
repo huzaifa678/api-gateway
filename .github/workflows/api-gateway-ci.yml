@@ -3,9 +3,10 @@ name: api-gateway CI
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [dev]
     paths: [api-gateway/**]
   pull_request:
+    branches: [test, main]
     paths: [api-gateway/**]
 
 env:
