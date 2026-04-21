@@ -17,29 +17,6 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: get ECR URL
-        id: ecr
-        run: |
-          ECR_URL=$(aws ecr describe-repositories --repository-names api-gateway \
-            --query 'repositories[0].repositoryUri' --output text)
-          echo "url=$ECR_URL" >> $GITHUB_OUTPUT
-
-      - uses: aws-actions/amazon-ecr-login@v2
-
-      - name: build & push image
-        uses: docker/build-push-action@v6
-        with:
-          context: api-gateway
-          push: true
-          tags: ${{ steps.ecr.outputs.url }}:${{ github.sha }}
-
       - name: Set environment
         id: vars
         run: |
