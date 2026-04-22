@@ -131,6 +131,12 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 	mux.Handle("/swagger/", httpSwagger.Handler(
 		httpSwagger.URL("http://localhost:9000/swagger/doc.json"),
 	))
+	mux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
 
 	corsHandler := transport.CORSMiddleware(cfg.CORS.AllowedOrigins)(mux)
 

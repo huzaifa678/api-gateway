@@ -26,7 +26,7 @@ jobs:
           else
             echo "file=values-prod.yaml" >> $GITHUB_OUTPUT
             echo "env=prod" >> $GITHUB_OUTPUT
-          fi
+          fig
 
       - name: update ArgoCD values-prod.yaml
         env:
