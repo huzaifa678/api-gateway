@@ -1,19 +1,41 @@
-name: api-gateway CD
+name: api-gateway Test
 
 on:
   pull_request:
-    branches: [main]
+    branches: [test]
     paths: [api-gateway/**]
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
 
+    defaults:
+      run:
+        working-directory: api-gateway
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api-gateway/go.mod
+          cache-dependency-path: api-gateway/go.sum
+
+      - run: make test
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -31,15 +53,15 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Retag sha → prod
+      - name: Retag sha → test
         run: |
           MANIFEST=$(aws ecr batch-get-image --repository-name api-gateway \
             --image-ids imageTag=sha-${{ github.sha }} \
             --query 'images[0].imageManifest' --output text)
           aws ecr put-image --repository-name api-gateway \
-            --image-tag prod --image-manifest "$MANIFEST"
+            --image-tag test --image-manifest "$MANIFEST"
 
-      - name: Update ArgoCD values-prod.yaml
+      - name: Update ArgoCD values-test.yaml
         env:
           ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
         run: |
@@ -50,10 +72,10 @@ jobs:
             https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
           chmod +x /usr/local/bin/yq
 
-          yq -i '.image.apiGateway = "${{ steps.ecr.outputs.url }}:prod"' saas-chart/values-prod.yaml
+          yq -i '.image.apiGateway = "${{ steps.ecr.outputs.url }}:test"' saas-chart/values-test.yaml
 
           git config user.email "ci@github.com"
           git config user.name "GitHub Actions"
-          git add saas-chart/values-prod.yaml
-          git commit -m "cd(api-gateway): promote sha-${{ github.sha }} to prod"
+          git add saas-chart/values-test.yaml
+          git commit -m "test(api-gateway): promote sha-${{ github.sha }} to test"
           git push
