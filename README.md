@@ -12,7 +12,7 @@ A Go API gateway built with **go-kit** that serves as the single entry point for
 
 ```mermaid
 graph TD
-    A["Client<br/>Web / Mobile / API"] -->|HTTPS Request| B["🎯 API Gateway<br/>Port 9000 · go-kit"]
+    A["Client<br/>Web / Mobile / API"] -->|HTTPS Request| B["API Gateway<br/>Port 9000 · go-kit"]
     B --> C["Auth Middleware<br/>Keycloak JWKS · JWT Validation"]
     C --> D["Rate Limiter<br/>Redis Token Bucket<br/>Auth: 10rps · Sub/Bill: 5rps"]
     D --> E["Circuit Breaker<br/>Sony gobreaker<br/>Per-service isolation"]
