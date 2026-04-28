@@ -6,9 +6,9 @@ import (
 	"net/http"
 
 	kitendpoint "github.com/go-kit/kit/endpoint"
-	"github.com/go-kit/kit/log/level"
 	kithttp "github.com/go-kit/kit/transport/http"
 	kitlog "github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/huzaifa678/SAAS-services/endpoint"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -75,10 +75,10 @@ func NewRESTHTTPHandler(endpoint kitendpoint.Endpoint, logger kitlog.Logger) htt
 		kithttp.ServerBefore(func(ctx context.Context, r *http.Request) context.Context {
 
 			propagator := otel.GetTextMapPropagator()
-			
+
 			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(r.Header))
 
-			level.Info(logger).Log(
+			_ = level.Info(logger).Log(
 				"msg", "incoming request",
 				"method", r.Method,
 				"path", r.URL.Path,

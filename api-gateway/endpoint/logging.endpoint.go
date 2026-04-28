@@ -30,7 +30,7 @@ func LoggingMiddleware(logger kitlog.Logger) endpoint.Middleware {
 				"level", "info",
 			)
 
-			level.Info(ctxLogger).Log(
+			_ = level.Info(ctxLogger).Log(
 				"msg", "endpoint called",
 				"took", time.Since(begin).String(),
 				"error", err,

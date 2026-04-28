@@ -18,10 +18,10 @@ func IsStorageUnderPressure(ctx context.Context, client *redis.Client, maxUsage 
 
 	for _, line := range strings.Split(info, "\n") {
 		if strings.HasPrefix(line, "used_memory:") {
-			fmt.Sscanf(line, "used_memory:%f", &usedMemory)
+			_, _ = fmt.Sscanf(line, "used_memory:%f", &usedMemory)
 		}
 		if strings.HasPrefix(line, "maxmemory:") {
-			fmt.Sscanf(line, "maxmemory:%f", &maxMemory)
+			_, _ = fmt.Sscanf(line, "maxmemory:%f", &maxMemory)
 		}
 	}
 

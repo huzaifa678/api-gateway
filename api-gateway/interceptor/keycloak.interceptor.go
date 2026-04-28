@@ -11,6 +11,10 @@ import (
 	endpoint "github.com/huzaifa678/SAAS-services/endpoint"
 )
 
+type contextKey string
+
+const UserClaimsKey contextKey = "user"
+
 type KeycloakClaims struct {
 	PreferredUsername string `json:"preferred_username"`
 	Email             string `json:"email"`
@@ -48,7 +52,7 @@ func KeycloakMiddleware(jwksURL string) (kitendpoint.Middleware, error) {
 				return nil, errors.New("unauthorized")
 			}
 
-			ctx = context.WithValue(ctx, "user", claims)
+			ctx = context.WithValue(ctx, UserClaimsKey, claims)
 			return next(ctx, request)
 		}
 	}, nil

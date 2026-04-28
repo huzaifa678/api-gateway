@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-kit/kit/log/level"
 	kitlog "github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	_ "github.com/huzaifa678/SAAS-services/docs"
 	"github.com/huzaifa678/SAAS-services/endpoint"
 	"github.com/huzaifa678/SAAS-services/interceptor"
@@ -44,22 +44,22 @@ func main() {
 	defer span.End()
 
 	shutdownLogger := logging.InitLogger(ctx, cfg.App.Name)
-	defer shutdownLogger(context.Background())	
-	
-	logger := logging.NewOTelKitLogger(cfg.App.Name) 
+	defer func() { _ = shutdownLogger(context.Background()) }()
+
+	logger := logging.NewOTelKitLogger(cfg.App.Name)
 
 	shutdownTracer := tracing.InitTracer(cfg.App.Name)
-	defer shutdownTracer(context.Background())
+	defer func() { _ = shutdownTracer(context.Background()) }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), interruptSignals...)
 	defer stop()
-	
+
 	waitGroup, ctx := errgroup.WithContext(ctx)
 
 	runGoKitHTTP(ctx, waitGroup, cfg, logger)
 
 	if err := waitGroup.Wait(); err != nil {
-		level.Error(logger).Log("msg", "error during shutdown", "err", err)
+		_ = level.Error(logger).Log("msg", "error during shutdown", "err", err)
 	}
 }
 
@@ -69,7 +69,7 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 		Addr: cfg.Redis.URL,
 	})
 
-	keycloakJWKSURL := cfg.Keycloak.JWKSURL 
+	keycloakJWKSURL := cfg.Keycloak.JWKSURL
 
 	subSvc := service.NewForwardService(
 		cfg.Services.Subscription.URL,
@@ -103,13 +103,13 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 	subEndpoint = endpoint.LoggingMiddleware(logger)(subEndpoint)
 	billEndpoint = endpoint.LoggingMiddleware(logger)(billEndpoint)
 
-	authEndpoint = endpoint.RateLimitMiddleware(redisClient, 10, 5, "auth", logger, 30*time.Second, )(authEndpoint)
-	subEndpoint = endpoint.RateLimitMiddleware(redisClient, 5, 3, "sub", logger, 30*time.Second, )(subEndpoint)
-	billEndpoint = endpoint.RateLimitMiddleware(redisClient, 5, 3, "bill", logger, 30*time.Second, )(billEndpoint)
+	authEndpoint = endpoint.RateLimitMiddleware(redisClient, 10, 5, "auth", logger, 30*time.Second)(authEndpoint)
+	subEndpoint = endpoint.RateLimitMiddleware(redisClient, 5, 3, "sub", logger, 30*time.Second)(subEndpoint)
+	billEndpoint = endpoint.RateLimitMiddleware(redisClient, 5, 3, "bill", logger, 30*time.Second)(billEndpoint)
 
 	jwtMiddleware, err := interceptor.KeycloakMiddleware(keycloakJWKSURL)
 	if err != nil {
-		level.Error(logger).Log("msg", "failed to initialize Keycloak middleware", "err", err)
+		_ = level.Error(logger).Log("msg", "failed to initialize Keycloak middleware", "err", err)
 		return
 	}
 
@@ -145,7 +145,7 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 		Handler: corsHandler,
 	}
 
-	level.Info(logger).Log(
+	_ = level.Info(logger).Log(
 		"msg", "API Gateway started",
 		"port", cfg.App.Port,
 	)
@@ -153,14 +153,14 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 	waitGroup.Go(func() error {
 		go func() {
 			<-ctx.Done()
-			level.Info(logger).Log("msg", "Shutting down API Gateway")
+			_ = level.Info(logger).Log("msg", "Shutting down API Gateway")
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := server.Shutdown(shutdownCtx); err != nil {
-				level.Error(logger).Log("msg", "server shutdown failed", "err", err)
+				_ = level.Error(logger).Log("msg", "server shutdown failed", "err", err)
 			} else {
-				level.Info(logger).Log("msg", "API Gateway stopped gracefully")
+				_ = level.Info(logger).Log("msg", "API Gateway stopped gracefully")
 			}
 		}()
 
