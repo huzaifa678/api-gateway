@@ -2,13 +2,16 @@ package service
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	kitlog "github.com/go-kit/log"
 	"github.com/huzaifa678/SAAS-services/utils"
 )
+
+var nopLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func newTestService(t *testing.T, handler http.HandlerFunc) (ForwardService, *httptest.Server) {
 	t.Helper()
@@ -18,7 +21,7 @@ func newTestService(t *testing.T, handler http.HandlerFunc) (ForwardService, *ht
 		"test-svc",
 		"test service unavailable",
 		utils.CircuitBreakerConfig{TimeoutMs: 1000, ErrorThreshold: 5, ResetTimeoutMs: 5000},
-		kitlog.NewNopLogger(),
+		nopLogger,
 	)
 	return svc, srv
 }
@@ -64,7 +67,7 @@ func TestForwardService_FallbackOnUnreachable(t *testing.T) {
 		"dead-svc",
 		"dead service unavailable",
 		utils.CircuitBreakerConfig{TimeoutMs: 100, ErrorThreshold: 1, ResetTimeoutMs: 1000},
-		kitlog.NewNopLogger(),
+		nopLogger,
 	)
 
 	body, status, err := svc.Forward(context.Background(), []byte(`{}`), http.Header{}, "/test", http.MethodPost)
@@ -85,16 +88,19 @@ func TestForwardService_InvalidURL(t *testing.T) {
 		"bad-svc",
 		"fallback",
 		utils.CircuitBreakerConfig{TimeoutMs: 100, ErrorThreshold: 1, ResetTimeoutMs: 1000},
-		kitlog.NewNopLogger(),
+		nopLogger,
 	)
 
-	// url.Parse fails before the circuit breaker, so the error propagates directly
-	// (no fallback body, status 0)
-	_, status, err := svc.Forward(context.Background(), nil, http.Header{}, "/path", http.MethodGet)
-	if err == nil {
-		t.Fatal("expected error for invalid base URL")
+	// http.NewRequestWithContext fails inside the circuit breaker wrapper,
+	// so the error is caught and the fallback body + 503 is returned.
+	body, status, err := svc.Forward(context.Background(), nil, http.Header{}, "/path", http.MethodGet)
+	if err != nil {
+		t.Fatalf("expected fallback (no error), got: %v", err)
 	}
-	if status != 0 {
-		t.Fatalf("expected status 0 for parse error, got %d", status)
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 fallback, got %d", status)
+	}
+	if len(body) == 0 {
+		t.Fatal("expected fallback body")
 	}
 }

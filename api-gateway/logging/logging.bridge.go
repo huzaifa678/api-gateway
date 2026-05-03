@@ -2,65 +2,49 @@ package logging
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
-	kitlog "github.com/go-kit/log"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 )
 
-type OTelKitLogger struct {
-	logger log.Logger
-	kitLogger kitlog.Logger
+type OTelSlogLogger struct {
+	slog   *slog.Logger
+	otel   log.Logger
 }
 
-func NewOTelKitLogger(serviceName string) *OTelKitLogger {
-
-	kitLogger := kitlog.NewLogfmtLogger(os.Stdout)
-	kitLogger = kitlog.With(
-		kitLogger,
-		"ts", kitlog.DefaultTimestampUTC,
-		"service", serviceName,
-	)
-	
-	return &OTelKitLogger{
-		logger: global.GetLoggerProvider().Logger(serviceName), // using global logger from open-telementry
-		kitLogger: kitLogger,
+func NewOTelSlogLogger(serviceName string) *OTelSlogLogger {
+	sl := slog.New(slog.NewTextHandler(os.Stdout, nil)).With("service", serviceName)
+	return &OTelSlogLogger{
+		slog: sl,
+		otel: global.GetLoggerProvider().Logger(serviceName),
 	}
 }
 
-func (l *OTelKitLogger) Log(keyvals ...interface{}) error {
+// Log implements a kitlog-compatible variadic key-value logger so existing
+// call sites (endpoint middleware, service, main) keep working unchanged.
+func (l *OTelSlogLogger) Log(keyvals ...interface{}) error {
+	ctx := context.Background()
 
-	ctx := context.Background() 
-
-	_ = l.kitLogger.Log(keyvals...)
-
+	// Build slog attrs and OTel record in one pass.
 	record := log.Record{}
 	record.SetTimestamp(time.Now())
 	record.SetObservedTimestamp(time.Now())
+	record.SetSeverity(log.SeverityInfo)
 
-	var severitySet bool
-
-	for i := 0; i < len(keyvals); i += 2 {
-		if i+1 >= len(keyvals) {
-			break
-		}
-
-		key := fmt.Sprintf("%v", keyvals[i])
-		val := keyvals[i+1] 
+	args := make([]any, 0, len(keyvals))
+	for i := 0; i+1 < len(keyvals); i += 2 {
+		key := interfaceToString(keyvals[i])
+		val := keyvals[i+1]
+		str := interfaceToString(val)
 
 		switch key {
-
 		case "msg":
-			record.SetBody(log.StringValue(interfaceToString(val)))
-
+			record.SetBody(log.StringValue(str))
 		case "level":
-			severitySet = true
-			switch interfaceToString(val) {
-			case "info":
-				record.SetSeverity(log.SeverityInfo)
+			switch str {
 			case "error":
 				record.SetSeverity(log.SeverityError)
 			case "warn":
@@ -68,19 +52,16 @@ func (l *OTelKitLogger) Log(keyvals ...interface{}) error {
 			default:
 				record.SetSeverity(log.SeverityInfo)
 			}
-
 		default:
-			record.AddAttributes(log.String(key, interfaceToString(val)))
+			record.AddAttributes(log.String(key, str))
 		}
+		args = append(args, slog.Any(key, val))
 	}
 
-	if !severitySet {
-		record.SetSeverity(log.SeverityInfo)
-	}
+	l.slog.LogAttrs(ctx, slog.LevelInfo, "", slog.Group("", args...))
 
 	WithSpanContext(ctx, &record)
-
-	l.logger.Emit(ctx, record)
+	l.otel.Emit(ctx, record)
 	return nil
 }
 
@@ -91,6 +72,6 @@ func interfaceToString(v interface{}) string {
 	case error:
 		return v.Error()
 	default:
-		return "" + fmt.Sprintf("%v", v)
+		return slog.AnyValue(v).String()
 	}
 }

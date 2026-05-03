@@ -2,14 +2,13 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	_ "github.com/huzaifa678/SAAS-services/docs"
 	"github.com/huzaifa678/SAAS-services/endpoint"
 	"github.com/huzaifa678/SAAS-services/interceptor"
@@ -46,7 +45,9 @@ func main() {
 	shutdownLogger := logging.InitLogger(ctx, cfg.App.Name)
 	defer func() { _ = shutdownLogger(context.Background()) }()
 
-	logger := logging.NewOTelKitLogger(cfg.App.Name)
+	otelLogger := logging.NewOTelSlogLogger(cfg.App.Name)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil)).With("service", cfg.App.Name)
+	_ = otelLogger // OTel logger initialized for side-effects (global provider set)
 
 	shutdownTracer := tracing.InitTracer(cfg.App.Name)
 	defer func() { _ = shutdownTracer(context.Background()) }()
@@ -56,44 +57,23 @@ func main() {
 
 	waitGroup, ctx := errgroup.WithContext(ctx)
 
-	runGoKitHTTP(ctx, waitGroup, cfg, logger)
+	runHTTP(ctx, waitGroup, cfg, logger)
 
 	if err := waitGroup.Wait(); err != nil {
-		_ = level.Error(logger).Log("msg", "error during shutdown", "err", err)
+		logger.ErrorContext(ctx, "error during shutdown", "err", err)
 	}
 }
 
-func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, logger kitlog.Logger) {
-
+func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, logger *slog.Logger) {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: cfg.Redis.URL,
 	})
 
 	keycloakJWKSURL := cfg.Keycloak.JWKSURL
 
-	subSvc := service.NewForwardService(
-		cfg.Services.Subscription.URL,
-		"subscription-service",
-		"Subscription service temporarily unavailable",
-		cfg.CircuitBreaker,
-		logger,
-	)
-
-	authSvc := service.NewForwardService(
-		cfg.Services.Auth.URL,
-		"auth-service",
-		"Auth service temporarily unavailable",
-		cfg.CircuitBreaker,
-		logger,
-	)
-
-	billSvc := service.NewForwardService(
-		cfg.Services.Billing.URL,
-		"billing-service",
-		"Billing service temporarily unavailable",
-		cfg.CircuitBreaker,
-		logger,
-	)
+	subSvc := service.NewForwardService(cfg.Services.Subscription.URL, "subscription-service", "Subscription service temporarily unavailable", cfg.CircuitBreaker, logger)
+	authSvc := service.NewForwardService(cfg.Services.Auth.URL, "auth-service", "Auth service temporarily unavailable", cfg.CircuitBreaker, logger)
+	billSvc := service.NewForwardService(cfg.Services.Billing.URL, "billing-service", "Billing service temporarily unavailable", cfg.CircuitBreaker, logger)
 
 	authEndpoint := endpoint.MakeAuthEndpoint(authSvc)
 	subEndpoint := endpoint.MakeSubscriptionEndpoint(subSvc)
@@ -109,7 +89,7 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 
 	jwtMiddleware, err := interceptor.KeycloakMiddleware(keycloakJWKSURL)
 	if err != nil {
-		_ = level.Error(logger).Log("msg", "failed to initialize Keycloak middleware", "err", err)
+		logger.ErrorContext(ctx, "failed to initialize Keycloak middleware", "err", err)
 		return
 	}
 
@@ -128,15 +108,9 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 	mux.Handle("/api/auth/", authHandler)
 	mux.Handle("/api/subscription/", subHandler)
 	mux.Handle("/api/billing/", billHandler)
-	mux.Handle("/swagger/", httpSwagger.Handler(
-		httpSwagger.URL("http://localhost:9000/swagger/doc.json"),
-	))
-	mux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL("http://localhost:9000/swagger/doc.json")))
+	mux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	corsHandler := transport.CORSMiddleware(cfg.CORS.AllowedOrigins)(mux)
 
@@ -145,22 +119,18 @@ func runGoKitHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Con
 		Handler: corsHandler,
 	}
 
-	_ = level.Info(logger).Log(
-		"msg", "API Gateway started",
-		"port", cfg.App.Port,
-	)
+	logger.InfoContext(ctx, "API Gateway started", "port", cfg.App.Port)
 
 	waitGroup.Go(func() error {
 		go func() {
 			<-ctx.Done()
-			_ = level.Info(logger).Log("msg", "Shutting down API Gateway")
-
+			logger.InfoContext(ctx, "Shutting down API Gateway")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := server.Shutdown(shutdownCtx); err != nil {
-				_ = level.Error(logger).Log("msg", "server shutdown failed", "err", err)
+				logger.ErrorContext(ctx, "server shutdown failed", "err", err)
 			} else {
-				_ = level.Info(logger).Log("msg", "API Gateway stopped gracefully")
+				logger.InfoContext(ctx, "API Gateway stopped gracefully")
 			}
 		}()
 

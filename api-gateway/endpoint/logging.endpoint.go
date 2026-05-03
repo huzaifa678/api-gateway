@@ -2,40 +2,26 @@ package endpoint
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/go-kit/kit/endpoint"
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func LoggingMiddleware(logger kitlog.Logger) endpoint.Middleware {
+func LoggingMiddleware(logger *slog.Logger) endpoint.Middleware {
 	return func(next endpoint.Endpoint) endpoint.Endpoint {
 		return func(ctx context.Context, request interface{}) (interface{}, error) {
-
 			begin := time.Now()
-
 			resp, err := next(ctx, request)
 
-			span := trace.SpanFromContext(ctx)
-			sc := span.SpanContext()
-
-			traceID := sc.TraceID().String()
-			spanID := sc.SpanID().String()
-
-			ctxLogger := kitlog.With(logger,
-				"trace_id", traceID,
-				"span_id", spanID,
-				"level", "info",
-			)
-
-			_ = level.Info(ctxLogger).Log(
-				"msg", "endpoint called",
+			sc := trace.SpanFromContext(ctx).SpanContext()
+			logger.InfoContext(ctx, "endpoint called",
+				"trace_id", sc.TraceID().String(),
+				"span_id", sc.SpanID().String(),
 				"took", time.Since(begin).String(),
 				"error", err,
 			)
-
 			return resp, err
 		}
 	}

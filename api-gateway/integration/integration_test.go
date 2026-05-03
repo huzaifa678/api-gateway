@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	kitlog "github.com/go-kit/log"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/huzaifa678/SAAS-services/endpoint"
 	"github.com/huzaifa678/SAAS-services/interceptor"
@@ -21,15 +22,14 @@ import (
 )
 
 const (
-	jwtSecret   = "integration-secret"
-	redisAddr   = "localhost:6379"
+	jwtSecret = "integration-secret"
+	redisAddr = "localhost:6379"
 )
 
-var cbCfg = utils.CircuitBreakerConfig{
-	TimeoutMs:      2000,
-	ErrorThreshold: 3,
-	ResetTimeoutMs: 5000,
-}
+var (
+	cbCfg     = utils.CircuitBreakerConfig{TimeoutMs: 2000, ErrorThreshold: 3, ResetTimeoutMs: 5000}
+	nopLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+)
 
 // makeJWT creates a signed JWT for the given userID.
 func makeJWT(userID string) string {
@@ -45,11 +45,9 @@ func makeJWT(userID string) string {
 
 // buildMux wires up the full gateway mux against the provided upstream test servers.
 func buildMux(authURL, subURL, billURL string) http.Handler {
-	logger := kitlog.NewNopLogger()
-
-	authSvc := service.NewForwardService(authURL, "auth-service", "auth unavailable", cbCfg, logger)
-	subSvc := service.NewForwardService(subURL, "sub-service", "sub unavailable", cbCfg, logger)
-	billSvc := service.NewForwardService(billURL, "bill-service", "bill unavailable", cbCfg, logger)
+	authSvc := service.NewForwardService(authURL, "auth-service", "auth unavailable", cbCfg, nopLogger)
+	subSvc := service.NewForwardService(subURL, "sub-service", "sub unavailable", cbCfg, nopLogger)
+	billSvc := service.NewForwardService(billURL, "bill-service", "bill unavailable", cbCfg, nopLogger)
 
 	authEp := endpoint.MakeAuthEndpoint(authSvc)
 	subEp := endpoint.MakeSubscriptionEndpoint(subSvc)
@@ -61,7 +59,7 @@ func buildMux(authURL, subURL, billURL string) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", transport.NewGraphQLHTTPHandler(authEp))
 	mux.Handle("/api/subscription/", transport.NewGraphQLHTTPHandler(subEp))
-	mux.Handle("/api/billing/", transport.NewRESTHTTPHandler(billEp, logger))
+	mux.Handle("/api/billing/", transport.NewRESTHTTPHandler(billEp, nopLogger))
 
 	return transport.CORSMiddleware([]string{"http://localhost:3000"})(mux)
 }
@@ -111,7 +109,7 @@ func TestIntegration_SubscriptionForward_NoJWT(t *testing.T) {
 	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992"))
 	defer gw.Close()
 
-	// go-kit HTTP server returns 500 when the endpoint returns an error (unauthorized)
+	// endpoint returns an error (unauthorized) → EncodeError → 500
 	resp, err := http.Post(gw.URL+"/api/subscription/", "application/json", strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +148,7 @@ func TestIntegration_BillingForward_NoJWT(t *testing.T) {
 	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992"))
 	defer gw.Close()
 
-	// go-kit HTTP server returns 500 when the endpoint returns an error (unauthorized)
+	// endpoint returns an error (unauthorized) → EncodeError → 500
 	resp, err := http.Get(gw.URL + "/api/billing/invoices")
 	if err != nil {
 		t.Fatal(err)
@@ -184,19 +182,13 @@ func TestIntegration_BillingForward_WithJWT(t *testing.T) {
 
 // --- Circuit Breaker ---
 
-// TestIntegration_CircuitBreaker_FallbackOnUnreachable verifies that when the upstream
-// is completely unreachable, the forward service returns the fallback body with 503.
-// NOTE: The circuit breaker state is not shared across Forward() calls because
-// WrapWithBreaker creates a new gobreaker instance per call — the breaker trip
-// behavior is covered in circuit/breaker_test.go unit tests.
 func TestIntegration_CircuitBreaker_FallbackOnUnreachable(t *testing.T) {
-	logger := kitlog.NewNopLogger()
 	svc := service.NewForwardService(
 		"http://localhost:19999", // nothing listening
 		"dead-svc",
 		"dead service unavailable",
 		utils.CircuitBreakerConfig{TimeoutMs: 500, ErrorThreshold: 1, ResetTimeoutMs: 10000},
-		logger,
+		nopLogger,
 	)
 
 	body, status, err := svc.Forward(context.Background(), nil, http.Header{}, "/test", http.MethodGet)
@@ -241,7 +233,6 @@ func TestIntegration_RateLimit_Redis(t *testing.T) {
 	}
 	defer rc.Close()
 
-	// flush any leftover keys from previous runs
 	rc.FlushDB(context.Background())
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -250,10 +241,9 @@ func TestIntegration_RateLimit_Redis(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	logger := kitlog.NewNopLogger()
-	authSvc := service.NewForwardService(upstream.URL, "auth-service", "auth unavailable", cbCfg, logger)
+	authSvc := service.NewForwardService(upstream.URL, "auth-service", "auth unavailable", cbCfg, nopLogger)
 	authEp := endpoint.MakeAuthEndpoint(authSvc)
-	authEp = endpoint.RateLimitMiddleware(rc, 2, 2, "integ-auth", logger, 30*time.Second)(authEp)
+	authEp = endpoint.RateLimitMiddleware(rc, 2, 2, "integ-auth", nopLogger, 30*time.Second)(authEp)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", transport.NewGraphQLHTTPHandler(authEp))
@@ -327,9 +317,7 @@ func TestIntegration_ResponseBodyPassthrough(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
-	data, ok := result["data"]
-	if !ok {
+	if _, ok := result["data"]; !ok {
 		t.Fatalf("expected 'data' key in response, got %v", result)
 	}
-	_ = data
 }

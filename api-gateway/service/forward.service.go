@@ -4,15 +4,12 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
-	"net/url"
 
-	kithttp "github.com/go-kit/kit/transport/http"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/huzaifa678/SAAS-services/circuit"
 	"github.com/huzaifa678/SAAS-services/utils"
 )
@@ -30,45 +27,39 @@ func NewForwardService(
 	serviceName string,
 	fallbackMsg string,
 	cbCfg utils.CircuitBreakerConfig,
-	logger kitlog.Logger,
+	logger *slog.Logger,
 ) ForwardService {
+	httpClient := &http.Client{}
 	s := &forwardService{}
 
 	s.forward = func(ctx context.Context, body []byte, headers http.Header, path, method string) ([]byte, int, error) {
 		fullURL := baseURL + path
-		_ = level.Info(logger).Log(
-			"msg", "forwarding request",
-			"url", fullURL,
-			"method", method,
-		)
-		u, err := url.Parse(fullURL)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		client := kithttp.NewClient(
-			method,
-			u,
-			encodeRequest,
-			decodeResponse,
-		).Endpoint()
+		logger.InfoContext(ctx, "forwarding request", "url", fullURL, "method", method)
 
 		wrapped := circuit.WrapWithBreaker(
 			func(ctx context.Context) (interface{}, error) {
-				reqHeaders := make(http.Header)
-
+				req, err := http.NewRequestWithContext(ctx, method, fullURL, bytes.NewReader(body))
+				if err != nil {
+					return nil, err
+				}
+				req.Header.Set("Content-Type", "application/json")
 				for k, v := range headers {
 					for _, val := range v {
-						reqHeaders.Add(k, val)
+						req.Header.Add(k, val)
 					}
 				}
+				otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 
-				otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(reqHeaders))
-
-				return client(ctx, struct {
+				resp, err := httpClient.Do(req)
+				if err != nil {
+					return nil, err
+				}
+				defer resp.Body.Close()
+				b, _ := io.ReadAll(resp.Body)
+				return struct {
 					Body   []byte
-					Header http.Header
-				}{body, reqHeaders})
+					Status int
+				}{b, resp.StatusCode}, nil
 			},
 			serviceName,
 			cbCfg,
@@ -92,27 +83,4 @@ func NewForwardService(
 
 func (s *forwardService) Forward(ctx context.Context, body []byte, headers http.Header, path, method string) ([]byte, int, error) {
 	return s.forward(ctx, body, headers, path, method)
-}
-
-func encodeRequest(_ context.Context, req *http.Request, request interface{}) error {
-	r := request.(struct {
-		Body   []byte
-		Header http.Header
-	})
-	req.Body = io.NopCloser(bytes.NewReader(r.Body))
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range r.Header {
-		for _, val := range v {
-			req.Header.Add(k, val)
-		}
-	}
-	return nil
-}
-
-func decodeResponse(_ context.Context, resp *http.Response) (interface{}, error) {
-	b, _ := io.ReadAll(resp.Body)
-	return struct {
-		Body   []byte
-		Status int
-	}{b, resp.StatusCode}, nil
 }

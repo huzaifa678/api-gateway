@@ -3,13 +3,12 @@ package transport
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 
-	kitendpoint "github.com/go-kit/kit/endpoint"
-	kithttp "github.com/go-kit/kit/transport/http"
-	kitlog "github.com/go-kit/log"
-	"github.com/go-kit/log/level"
-	"github.com/huzaifa678/SAAS-services/endpoint"
+	"github.com/go-kit/kit/endpoint"
+	"github.com/huzaifa678/SAAS-services/errors"
+	ep "github.com/huzaifa678/SAAS-services/endpoint"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
@@ -20,25 +19,21 @@ func DecodeRESTRequest(_ context.Context, r *http.Request) (interface{}, error) 
 		return nil, err
 	}
 
-	path := r.URL.Path
-
-	method := r.Method
-
 	headers := map[string][]string{}
 	for k, v := range r.Header {
 		headers[k] = v
 	}
 
-	return endpoint.ForwardRequest{
+	return ep.ForwardRequest{
 		Body:   body,
 		Header: headers,
-		Path:   path,
-		Method: method,
+		Path:   r.URL.Path,
+		Method: r.Method,
 	}, nil
 }
 
 func EncodeRESTRequest(_ context.Context, w http.ResponseWriter, response interface{}) error {
-	resp := response.(endpoint.ForwardResponse)
+	resp := response.(ep.ForwardResponse)
 	if resp.Error != "" {
 		http.Error(w, resp.Error, http.StatusServiceUnavailable)
 		return nil
@@ -59,31 +54,34 @@ func EncodeRESTRequest(_ context.Context, w http.ResponseWriter, response interf
 // @Param Authorization header string true "Bearer JWT token"
 // @Param path path string false "Dynamic billing route path"
 // @Param request body object false "Billing request payload"
-// @Success 200 {object} endpoint.ForwardResponseSwagger
-// @Failure 400 {object} endpoint.ForwardResponseSwagger
-// @Failure 401 {object} endpoint.ForwardResponseSwagger
-// @Failure 503 {object} endpoint.ForwardResponseSwagger
+// @Success 200 {object} ep.ForwardResponseSwagger
+// @Failure 400 {object} ep.ForwardResponseSwagger
+// @Failure 401 {object} ep.ForwardResponseSwagger
+// @Failure 503 {object} ep.ForwardResponseSwagger
 // @Router /api/billing/{path} [get]
 // @Router /api/billing/{path} [post]
 // @Router /api/billing/{path} [put]
 // @Router /api/billing/{path} [delete]
-func NewRESTHTTPHandler(endpoint kitendpoint.Endpoint, logger kitlog.Logger) http.Handler {
-	return kithttp.NewServer(
-		endpoint,
-		DecodeRESTRequest,
-		EncodeRESTRequest,
-		kithttp.ServerBefore(func(ctx context.Context, r *http.Request) context.Context {
+func NewRESTHTTPHandler(e endpoint.Endpoint, logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 
-			propagator := otel.GetTextMapPropagator()
+		logger.InfoContext(ctx, "incoming request", "method", r.Method, "path", r.URL.Path)
 
-			ctx = propagator.Extract(ctx, propagation.HeaderCarrier(r.Header))
+		req, err := DecodeRESTRequest(ctx, r)
+		if err != nil {
+			errors.EncodeError(ctx, err, w)
+			return
+		}
 
-			_ = level.Info(logger).Log(
-				"msg", "incoming request",
-				"method", r.Method,
-				"path", r.URL.Path,
-			)
-			return ctx
-		}),
-	)
+		resp, err := e(ctx, req)
+		if err != nil {
+			errors.EncodeError(ctx, err, w)
+			return
+		}
+
+		if err := EncodeRESTRequest(ctx, w, resp); err != nil {
+			errors.EncodeError(ctx, err, w)
+		}
+	})
 }

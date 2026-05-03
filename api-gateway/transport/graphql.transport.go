@@ -6,11 +6,10 @@ import (
 	"net/http"
 
 	kitendpoint "github.com/go-kit/kit/endpoint"
-	kithttp "github.com/go-kit/kit/transport/http"
-	"github.com/huzaifa678/SAAS-services/endpoint"
+	ep "github.com/huzaifa678/SAAS-services/endpoint"
+	"github.com/huzaifa678/SAAS-services/errors"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
-	"github.com/huzaifa678/SAAS-services/errors"
 )
 
 func DecodeGraphQLRequest(_ context.Context, r *http.Request) (interface{}, error) {
@@ -24,16 +23,17 @@ func DecodeGraphQLRequest(_ context.Context, r *http.Request) (interface{}, erro
 		headers[k] = v
 	}
 
-	return endpoint.ForwardRequest{
+	return ep.ForwardRequest{
 		Body:   body,
 		Header: headers,
-		Path: r.URL.Path,
+		Path:   r.URL.Path,
 		Method: r.Method,
 	}, nil
 }
 
 func EncodeGraphQLResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
-	resp := response.(endpoint.ForwardResponse)
+	resp := response.(ep.ForwardResponse)
+
 	if resp.Error != "" {
 		http.Error(w, resp.Error, http.StatusServiceUnavailable)
 		return nil
@@ -53,8 +53,8 @@ func EncodeGraphQLResponse(_ context.Context, w http.ResponseWriter, response in
 // @Produce json
 // @Param Authorization header string false "Bearer JWT token"
 // @Param request body object true "GraphQL query payload"
-// @Success 200 {object} endpoint.ForwardResponseSwagger
-// @Failure 503 {object} endpoint.ForwardResponseSwagger
+// @Success 200 {object} ep.ForwardResponseSwagger
+// @Failure 503 {object} ep.ForwardResponseSwagger
 // @Router /api/auth/ [post]
 // GraphQLSubscription godoc
 // @Summary Subscription GraphQL endpoint
@@ -64,17 +64,30 @@ func EncodeGraphQLResponse(_ context.Context, w http.ResponseWriter, response in
 // @Produce json
 // @Param Authorization header string true "Bearer JWT token"
 // @Param request body object true "GraphQL query payload"
-// @Success 200 {object} endpoint.ForwardResponseSwagger
-// @Failure 503 {object} endpoint.ForwardResponseSwagger
+// @Success 200 {object} ep.ForwardResponseSwagger
+// @Failure 503 {object} ep.ForwardResponseSwagger
 // @Router /api/subscription/ [post]
-func NewGraphQLHTTPHandler(endpoint kitendpoint.Endpoint) http.Handler {
-	return kithttp.NewServer(
-		endpoint,
-		DecodeGraphQLRequest,
-		EncodeGraphQLResponse,
-		kithttp.ServerBefore(func(ctx context.Context, r *http.Request) context.Context {
-			return otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(r.Header))
-		}),
-		kithttp.ServerErrorEncoder(errors.EncodeError),
-	)
+func NewGraphQLHTTPHandler(e kitendpoint.Endpoint) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		ctx = otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(r.Header))
+
+		req, err := DecodeGraphQLRequest(ctx, r)
+		if err != nil {
+			errors.EncodeError(ctx, err, w)
+			return
+		}
+
+		resp, err := e(ctx, req)
+		if err != nil {
+			errors.EncodeError(ctx, err, w)
+			return
+		}
+
+		if err := EncodeGraphQLResponse(ctx, w, resp); err != nil {
+			errors.EncodeError(ctx, err, w)
+			return
+		}
+	})
 }
