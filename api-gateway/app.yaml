@@ -17,6 +17,9 @@ keycloak:
 redis:
   url: localhost:6379
 
+swagger:
+  url: http://localhost:9000/swagger/doc.json
+
 jwt:
   secret: supersecret
 

@@ -108,7 +108,7 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 	mux.Handle("/api/auth/", authHandler)
 	mux.Handle("/api/subscription/", subHandler)
 	mux.Handle("/api/billing/", billHandler)
-	mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL("http://localhost:9000/swagger/doc.json")))
+	mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL(cfg.Swagger.URL)))
 	mux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 

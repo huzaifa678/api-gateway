@@ -32,6 +32,10 @@ type Config struct {
 		URL string `mapstructure:"url"`
 	}
 
+	Swagger struct {
+		URL string `mapstructure:"url"`
+	}
+
 	Keycloak struct {
 		JWKSURL string `mapstructure:"jwksURL"`
 	}
