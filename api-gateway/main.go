@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -108,7 +109,12 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 	mux.Handle("/api/auth/", authHandler)
 	mux.Handle("/api/subscription/", subHandler)
 	mux.Handle("/api/billing/", billHandler)
-	mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL(cfg.Swagger.URL)))
+	// Swagger UI / OpenAPI is exposed only in dev — never in staging/prod, where
+	// publishing the API surface widens the attack surface. Env comes from
+	// GATEWAY_APP_ENV (see app.yaml / the Helm chart); anything but "dev" hides it.
+	if strings.EqualFold(cfg.App.Env, "dev") {
+		mux.Handle("/swagger/", httpSwagger.Handler(httpSwagger.URL(cfg.Swagger.URL)))
+	}
 	mux.HandleFunc("/healthz/live", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/healthz/ready", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
