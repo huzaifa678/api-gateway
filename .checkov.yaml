@@ -1,0 +1,10 @@
+framework:
+  - dockerfile
+  - secrets
+compact: true
+quiet: true
+soft-fail: true
+skip-path:
+  - node_modules
+  - .git
+  - vendor
