@@ -243,3 +243,16 @@ GitHub Actions workflows in `.github/workflows/`:
 ## License
 
 MIT
+## Security & Guardrails
+
+Container supply-chain guardrails run in CI and locally — see [`policy/README.md`](policy/README.md).
+
+- **Dockerfile Policy as Code** — OPA/Rego via `conftest` (`policy/docker/`): hard-gates unpinned/`:latest` base images, `USER root` final stages, and `ADD <remote-url>`; warns on missing `USER`/`HEALTHCHECK`, tag-not-digest, `apt` without `--no-install-recommends`, etc.
+- **Checkov** — Dockerfile + secret scanning (baseline/report mode).
+- **Trivy** — image scanning **before push** in the build pipeline (fail-closed on fixable CRITICAL/HIGH), plus `trivy fs` (deps) and `trivy config` (misconfig) on PRs. Complements source-level scanning (e.g. SonarQube).
+
+```bash
+./scripts/guardrails.sh   # conftest + checkov + trivy (skips tools not installed)
+```
+
+CI: [`.github/workflows/security.yml`](.github/workflows/security.yml) (PR gate) + the Trivy image scan wired into the build workflow.
