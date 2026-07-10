@@ -63,28 +63,24 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & push sha-tagged image
+      - name: Build image (load locally for scanning)
         uses: docker/build-push-action@v7
         with:
           context: api-gateway
-          push: true
+          push: false
+          load: true
           tags: ${{ steps.ecr.outputs.url }}:sha-${{ github.sha }}
 
-      - name: Update ArgoCD values-dev.yaml
-        env:
-          ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
+      - name: Install Trivy
         run: |
-          git clone https://x-access-token:${ARGOCD_REPO_TOKEN}@github.com/huzaifa678/SAAS-Continious-Delivery.git /tmp/cd
-          cd /tmp/cd
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b "$HOME/.local/bin" v0.58.1
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-          wget -qO /usr/local/bin/yq \
-            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
-          chmod +x /usr/local/bin/yq
+      - name: Trivy image scan (scan-before-push gate)
+        run: |
+          trivy image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 1 \
+            --format table "${{ steps.ecr.outputs.url }}:sha-${{ github.sha }}"
 
-          yq -i '.image.apiGateway = "${{ steps.ecr.outputs.url }}:sha-${{ github.sha }}"' saas-chart/values-dev.yaml
-
-          git config user.email "ci@github.com"
-          git config user.name "GitHub Actions"
-          git add saas-chart/values-dev.yaml
-          git commit -m "ci(api-gateway): deploy sha-${{ github.sha }} to dev"
-          git push
+      - name: Push scanned image
+        run: docker push "${{ steps.ecr.outputs.url }}:sha-${{ github.sha }}"
