@@ -3,6 +3,7 @@ package logging
 import (
 	"context"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -19,7 +20,7 @@ func WithSpanContext(ctx context.Context, record *log.Record) {
 	}
 
 	record.AddAttributes(
-		log.String("trace_id", sc.TraceID().String()),
-		log.String("span_id", sc.SpanID().String()),
+		attribute.String("trace_id", sc.TraceID().String()),
+		attribute.String("span_id", sc.SpanID().String()),
 	)
 }
