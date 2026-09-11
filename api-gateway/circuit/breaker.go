@@ -4,12 +4,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/sony/gobreaker"
 	"github.com/huzaifa678/SAAS-services/utils"
+	"github.com/sony/gobreaker"
 )
 
-func WrapWithBreaker(fn func(ctx context.Context) (interface{}, error), name string, cfg utils.CircuitBreakerConfig) func(ctx context.Context) (interface{}, error) {
-	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+// NewBreaker builds a configured circuit breaker once
+func NewBreaker(name string, cfg utils.CircuitBreakerConfig) *gobreaker.CircuitBreaker {
+	return gobreaker.NewCircuitBreaker(gobreaker.Settings{
 		Name:    name,
 		Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond,
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
@@ -17,6 +18,10 @@ func WrapWithBreaker(fn func(ctx context.Context) (interface{}, error), name str
 		},
 		Interval: time.Duration(cfg.ResetTimeoutMs) * time.Millisecond,
 	})
+}
+
+func WrapWithBreaker(fn func(ctx context.Context) (interface{}, error), name string, cfg utils.CircuitBreakerConfig) func(ctx context.Context) (interface{}, error) {
+	cb := NewBreaker(name, cfg)
 
 	return func(ctx context.Context) (interface{}, error) {
 		res, err := cb.Execute(func() (interface{}, error) {
