@@ -8,13 +8,17 @@ import (
 )
 
 type CircuitBreakerConfig struct {
-	TimeoutMs       int `mapstructure:"timeoutMs"`
-	ErrorThreshold  int `mapstructure:"errorThreshold"`
-	ResetTimeoutMs  int `mapstructure:"resetTimeoutMs"`
+	TimeoutMs      int `mapstructure:"timeoutMs"`
+	ErrorThreshold int `mapstructure:"errorThreshold"`
+	ResetTimeoutMs int `mapstructure:"resetTimeoutMs"`
 }
 
 type CORSConfig struct {
 	AllowedOrigins []string `mapstructure:"allowedOrigins"`
+}
+
+type CacheConfig struct {
+	TTLSeconds int `mapstructure:"ttlSeconds"`
 }
 
 type Config struct {
@@ -52,11 +56,11 @@ type Config struct {
 		Billing struct {
 			URL string `mapstructure:"url"`
 		} `mapstructure:"billing"`
-		
 	} `mapstructure:"services"`
 
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuitBreaker"`
 	CORS           CORSConfig           `mapstructure:"cors"`
+	Cache          CacheConfig          `mapstructure:"cache"`
 }
 
 func Load() *Config {
