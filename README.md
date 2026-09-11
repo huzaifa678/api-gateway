@@ -1,26 +1,27 @@
 # API Gateway
 
-A Go API gateway built with **go-kit** that serves as the single entry point for the SaaS platform. It handles JWT authentication via **Keycloak**, per-endpoint **Redis rate limiting**, **circuit breaking**, distributed tracing, and proxies requests to the auth, subscription, and billing microservices.
+A Go API gateway built on the standard library (**net/http**) that serves as the single entry point for the SaaS platform. It handles JWT authentication via **Keycloak**, per-endpoint **Redis rate limiting**, **circuit breaking**, **Redis response caching**, distributed tracing, and proxies requests to the auth, subscription, and billing microservices.
 
 ## Tags
 
 ![Status](https://img.shields.io/badge/status-in%20development-yellow)
 ![Go Version](https://img.shields.io/badge/go-1.25-blue)
-![Go Kit](https://img.shields.io/badge/framework-go--kit-blueviolet)
+![net/http](https://img.shields.io/badge/framework-net%2Fhttp-blueviolet)
 
 ## Architecture
 
 ```mermaid
 graph TD
-    A["Client<br/>Web / Mobile / API"] -->|HTTPS Request| B["API Gateway<br/>Port 9000 · go-kit"]
+    A["Client<br/>Web / Mobile / API"] -->|HTTPS Request| B["API Gateway<br/>Port 9000 · net/http"]
     B --> C["Auth Middleware<br/>Keycloak JWKS · JWT Validation"]
     C --> D["Rate Limiter<br/>Redis Token Bucket<br/>Auth: 10rps · Sub/Bill: 5rps"]
     D --> E["Circuit Breaker<br/>Sony gobreaker<br/>Per-service isolation"]
-    E --> F["Endpoint Layer<br/>Logging · Tracing · Middleware"]
+    E --> F["Middleware Layer<br/>Logging · Tracing"]
+    F --> N["Response Cache<br/>Redis · GET · per-caller"]
 
-    F -->|GraphQL Proxy<br/>/api/auth/| G["Auth Service<br/>Port 8080"]
-    F -->|GraphQL Proxy<br/>/api/subscription/| H["Subscription Service<br/>Port 8081"]
-    F -->|REST Proxy<br/>/api/billing/| I["Billing Service<br/>Port 8082"]
+    N -->|GraphQL Proxy<br/>/api/auth/| G["Auth Service<br/>Port 8080"]
+    N -->|GraphQL Proxy<br/>/api/subscription/| H["Subscription Service<br/>Port 8081"]
+    N -->|REST Proxy<br/>/api/billing/| I["Billing Service<br/>Port 8082"]
 
     B --> J["Redis<br/>Rate Limit State<br/>Token Bucket per user"]
     B --> K["OpenTelemetry<br/>Traces + Logs · OTLP HTTP"]
@@ -40,6 +41,7 @@ graph TD
     style K fill:#FF8B94,stroke:#333,color:#fff,stroke-width:2px
     style L fill:#FFE66D,stroke:#333,color:#333,stroke-width:2px
     style M fill:#FFE66D,stroke:#333,color:#333,stroke-width:2px
+    style N fill:#95E1D3,stroke:#333,color:#333,stroke-width:2px
 ```
 
 ## Tech Stack
@@ -47,7 +49,7 @@ graph TD
 | Concern | Technology |
 |---|---|
 | Language | Go 1.25 |
-| Framework | go-kit |
+| Framework | Standard library (`net/http`) |
 | Auth | Keycloak (JWKS / JWT validation via `golang-jwt/jwt`) |
 | Rate Limiting | Redis (`go-redis/v9`) — token bucket per endpoint |
 | Circuit Breaker | Sony gobreaker |
@@ -64,7 +66,8 @@ graph TD
   - Subscription: 5 req/token, burst 3
   - Billing: 5 req/token, burst 3
 - **Circuit breaker** — wraps each upstream service; configurable timeout, error threshold, and reset timeout
-- **Dual transport** — GraphQL reverse proxy for auth/subscription, REST reverse proxy for billing
+- **Response caching** — Redis-backed cache for GET responses, keyed per caller; configurable TTL (`0` disables it)
+- **Reverse proxy** — forwards GraphQL requests to auth/subscription and REST requests to billing
 - **CORS** — configurable allowed origins
 - **Swagger UI** — available at `/swagger/`
 - **Health endpoints** — `/healthz/live` and `/healthz/ready`
@@ -76,21 +79,20 @@ graph TD
 api-gateway/
 ├── main.go                      # Entry point, wiring
 ├── app.yaml                     # Configuration file
+├── middleware/
+│   ├── logging.go               # Logging middleware
+│   ├── ratelimit.go             # Redis rate-limit middleware
+│   └── tracing.go               # OTel tracing middleware
 ├── endpoint/
-│   ├── auth.endpoint.go         # Auth endpoint factory
-│   ├── subscription.endpoint.go # Subscription endpoint factory
-│   ├── billing.endpoint.go      # Billing endpoint factory
-│   ├── logging.endpoint.go      # Logging middleware
-│   ├── ratelimit.endpoint.go    # Redis rate-limit middleware
-│   └── tracing.endpoint.go      # OTel tracing middleware
+│   └── swagger.endpoint.go      # Swagger response DTO
 ├── interceptor/
 │   ├── jwt.interceptor.go       # JWT validation middleware
 │   └── keycloak.interceptor.go  # Keycloak JWKS middleware
 ├── service/
-│   └── forward.service.go       # HTTP reverse proxy + circuit breaker
+│   ├── forward.service.go       # HTTP reverse proxy + circuit breaker
+│   └── cache.proxy.go           # Redis GET response cache proxy
 ├── transport/
-│   ├── graphql.transport.go     # GraphQL reverse proxy handler
-│   ├── rest.transpost.go        # REST reverse proxy handler
+│   ├── handler.go               # Forward HTTP handler
 │   └── cors.go                  # CORS middleware
 ├── circuit/
 │   └── breaker.go               # gobreaker wrapper
@@ -98,7 +100,7 @@ api-gateway/
 │   └── throttling.setup.go      # Redis rate limiter setup
 ├── logging/
 │   ├── logging.init.go          # OTel logger init
-│   ├── logging.bridge.go        # go-kit ↔ OTel bridge
+│   ├── logging.bridge.go        # slog ↔ OTel bridge
 │   └── logging.span.go          # Span logging helpers
 ├── tracing/
 │   └── tracing.go               # OTel tracer init
@@ -155,6 +157,9 @@ circuitBreaker:
   timeoutMs: 5000
   errorThreshold: 50
   resetTimeoutMs: 10000
+
+cache:
+  ttlSeconds: 30   # GET response cache TTL; 0 disables caching
 ```
 
 All values can be overridden with environment variables using the `GATEWAY_` prefix (e.g., `GATEWAY_APP_PORT=9000`).
@@ -221,6 +226,17 @@ Each upstream service has its own `gobreaker.CircuitBreaker` instance. Configura
 - `resetTimeoutMs` — time in open state before attempting half-open
 
 When a circuit is open, the gateway returns `503 Service Unavailable` immediately without forwarding the request.
+
+## Caching
+
+A Redis-backed cache proxy sits in front of each upstream. It caches only `GET`
+requests with a 2xx response, keyed by request path plus a hash of the caller's
+`Authorization` token so one caller never reads another's cached data. A cache
+hit is served directly, skipping the circuit breaker and the upstream call.
+
+Configured via `cache.ttlSeconds` in `app.yaml`; a value of `0` disables caching
+(the proxy passes straight through). GraphQL traffic (auth/subscription) is sent
+over `POST` and is therefore never cached.
 
 ## Docker
 
