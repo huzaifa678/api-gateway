@@ -11,9 +11,9 @@ import (
 	"time"
 
 	_ "github.com/huzaifa678/SAAS-services/docs"
-	"github.com/huzaifa678/SAAS-services/endpoint"
 	"github.com/huzaifa678/SAAS-services/interceptor"
 	"github.com/huzaifa678/SAAS-services/logging"
+	"github.com/huzaifa678/SAAS-services/middleware"
 	"github.com/huzaifa678/SAAS-services/service"
 	"github.com/huzaifa678/SAAS-services/tracing"
 	"github.com/huzaifa678/SAAS-services/transport"
@@ -29,6 +29,15 @@ var interruptSignals = []os.Signal{
 	syscall.SIGTERM,
 	syscall.SIGHUP,
 	syscall.SIGQUIT,
+}
+
+// chain wraps h in the given middleware. The first middleware is the outermost
+// (runs first on the way in), matching how the stack is read top to bottom.
+func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler {
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return h
 }
 
 // @title SAAS API Gateway
@@ -76,34 +85,35 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 	authSvc := service.NewForwardService(cfg.Services.Auth.URL, "auth-service", "Auth service temporarily unavailable", cfg.CircuitBreaker, logger)
 	billSvc := service.NewForwardService(cfg.Services.Billing.URL, "billing-service", "Billing service temporarily unavailable", cfg.CircuitBreaker, logger)
 
-	authEndpoint := endpoint.MakeAuthEndpoint(authSvc)
-	subEndpoint := endpoint.MakeSubscriptionEndpoint(subSvc)
-	billEndpoint := endpoint.MakeBillingEndpoint(billSvc)
+	// Cache proxy sits outermost: a GET hit skips the breaker and upstream
+	cacheTTL := time.Duration(cfg.Cache.TTLSeconds) * time.Second
+	subSvc = service.NewCachingProxy(subSvc, redisClient, cacheTTL)
+	authSvc = service.NewCachingProxy(authSvc, redisClient, cacheTTL)
+	billSvc = service.NewCachingProxy(billSvc, redisClient, cacheTTL)
 
-	authEndpoint = endpoint.LoggingMiddleware(logger)(authEndpoint)
-	subEndpoint = endpoint.LoggingMiddleware(logger)(subEndpoint)
-	billEndpoint = endpoint.LoggingMiddleware(logger)(billEndpoint)
-
-	authEndpoint = endpoint.RateLimitMiddleware(redisClient, 10, 5, "auth", logger, 30*time.Second)(authEndpoint)
-	subEndpoint = endpoint.RateLimitMiddleware(redisClient, 5, 3, "sub", logger, 30*time.Second)(subEndpoint)
-	billEndpoint = endpoint.RateLimitMiddleware(redisClient, 5, 3, "bill", logger, 30*time.Second)(billEndpoint)
-
-	jwtMiddleware, err := interceptor.KeycloakMiddleware(keycloakJWKSURL)
+	authMW, err := interceptor.KeycloakMiddleware(keycloakJWKSURL)
 	if err != nil {
 		logger.ErrorContext(ctx, "failed to initialize Keycloak middleware", "err", err)
 		return
 	}
 
-	subEndpoint = jwtMiddleware(subEndpoint)
-	billEndpoint = jwtMiddleware(billEndpoint)
-
-	authEndpoint = endpoint.TracedEndpoint("AuthEndpoint", authEndpoint)
-	subEndpoint = endpoint.TracedEndpoint("SubscriptionEndpoint", subEndpoint)
-	billEndpoint = endpoint.TracedEndpoint("BillingEndpoint", billEndpoint)
-
-	authHandler := transport.NewGraphQLHTTPHandler(authEndpoint)
-	subHandler := transport.NewGraphQLHTTPHandler(subEndpoint)
-	billHandler := transport.NewRESTHTTPHandler(billEndpoint, logger)
+	authHandler := chain(transport.NewHandler(authSvc),
+		middleware.Tracing("AuthEndpoint"),
+		middleware.RateLimit(redisClient, 10, 5, "auth", logger, 30*time.Second),
+		middleware.Logging(logger),
+	)
+	subHandler := chain(transport.NewHandler(subSvc),
+		middleware.Tracing("SubscriptionEndpoint"),
+		authMW,
+		middleware.RateLimit(redisClient, 5, 3, "sub", logger, 30*time.Second),
+		middleware.Logging(logger),
+	)
+	billHandler := chain(transport.NewHandler(billSvc),
+		middleware.Tracing("BillingEndpoint"),
+		authMW,
+		middleware.RateLimit(redisClient, 5, 3, "bill", logger, 30*time.Second),
+		middleware.Logging(logger),
+	)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", authHandler)

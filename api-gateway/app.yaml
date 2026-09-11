@@ -32,3 +32,6 @@ circuitBreaker:
   timeoutMs: 5000
   errorThreshold: 50
   resetTimeoutMs: 10000
+
+cache:
+  ttlSeconds: 30   # GET response cache TTL; 0 disables caching

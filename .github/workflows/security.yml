@@ -10,7 +10,6 @@ permissions:
 
 env:
   CONFTEST_VERSION: 0.56.0
-  TRIVY_VERSION: v0.58.1
 
 jobs:
   guardrails:
@@ -22,12 +21,6 @@ jobs:
         run: |
           curl -sSfL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin conftest
-
-      - name: Install Trivy
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b "$HOME/.local/bin" "${TRIVY_VERSION}"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Dockerfile Policy as Code (conftest / OPA)
         run: |
@@ -46,9 +39,25 @@ jobs:
           checkov -d . --framework dockerfile,secrets --config-file .checkov.yaml
 
       - name: Trivy config (Dockerfile/IaC misconfiguration, report)
-        run: trivy config --exit-code 0 .
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: config
+          scan-ref: .
+          exit-code: "0"
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
 
       - name: Trivy fs (dependency vulnerabilities, gate on CRITICAL/HIGH)
-        run: |
-          trivy fs --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed \
-            --exit-code 1 --skip-dirs node_modules .
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-dirs: node_modules
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db

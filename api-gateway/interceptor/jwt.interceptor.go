@@ -2,12 +2,11 @@ package interceptor
 
 import (
 	"context"
-	"errors"
+	"net/http"
 	"strings"
 
-	kitendpoint "github.com/go-kit/kit/endpoint"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/huzaifa678/SAAS-services/endpoint"
+	"github.com/huzaifa678/SAAS-services/errors"
 )
 
 const UserIDKey contextKey = "userId"
@@ -17,31 +16,28 @@ type MyClaims struct {
 	jwt.RegisteredClaims
 }
 
-func JWTMiddleware(secret string) kitendpoint.Middleware {
-	return func(next kitendpoint.Endpoint) kitendpoint.Endpoint {
-		return func(ctx context.Context, request interface{}) (interface{}, error) {
-			req := request.(endpoint.ForwardRequest)
-			authHeader := ""
-			if vals, ok := req.Header["Authorization"]; ok && len(vals) > 0 {
-				authHeader = vals[0]
-			}
-
+// standard net/http middleware
+func JWTMiddleware(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
 			if !strings.HasPrefix(authHeader, "Bearer ") {
-				return nil, errors.New("unauthorized")
+				errors.EncodeError(r.Context(), errUnauthorized, w)
+				return
 			}
 
 			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-
 			claims := &MyClaims{}
 			token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
 				return []byte(secret), nil
 			})
 			if err != nil || !token.Valid {
-				return nil, errors.New("unauthorized")
+				errors.EncodeError(r.Context(), errUnauthorized, w)
+				return
 			}
 
-			ctx = context.WithValue(ctx, UserIDKey, claims.UserID)
-			return next(ctx, request)
-		}
+			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 }

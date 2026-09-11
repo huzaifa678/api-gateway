@@ -1,12 +1,12 @@
-package endpoint
+package middleware
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
-	"github.com/go-kit/kit/endpoint"
 	"github.com/huzaifa678/SAAS-services/errors"
 	"github.com/huzaifa678/SAAS-services/throttling"
 	"github.com/redis/go-redis/v9"
@@ -22,7 +22,9 @@ type RedisRateLimiter struct {
 	ttl            time.Duration
 }
 
-func RateLimitMiddleware(redisClient *redis.Client, rps int, burst int, keyPrefix string, logger *slog.Logger, ttl time.Duration) endpoint.Middleware {
+
+// Replaces the go-kit RateLimitMiddleware
+func RateLimit(redisClient *redis.Client, rps int, burst int, keyPrefix string, logger *slog.Logger, ttl time.Duration) func(http.Handler) http.Handler {
 	limiter := &RedisRateLimiter{
 		redisClient:    redisClient,
 		rps:            rps,
@@ -33,8 +35,10 @@ func RateLimitMiddleware(redisClient *redis.Client, rps int, burst int, keyPrefi
 		ttl:            ttl,
 	}
 
-	return func(next endpoint.Endpoint) endpoint.Endpoint {
-		return func(ctx context.Context, request interface{}) (interface{}, error) {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
 			userID, _ := ctx.Value("userId").(string)
 			if userID == "" {
 				userID = "anonymous"
@@ -47,24 +51,27 @@ func RateLimitMiddleware(redisClient *redis.Client, rps int, burst int, keyPrefi
 
 			if pressure {
 				limiter.logger.WarnContext(ctx, "storage under pressure - throttling", "userID", userID)
-				return nil, errors.ErrStoragePressure
+				errors.EncodeError(ctx, errors.ErrStoragePressure, w)
+				return
 			}
 
 			key := fmt.Sprintf("%s:%s", limiter.keyPrefix, userID)
 			allowed, err := limiter.Allow(ctx, key)
 			if err != nil {
 				limiter.logger.ErrorContext(ctx, "rate limiter error", "userID", userID, "key", key, "err", err)
-				return nil, err
+				errors.EncodeError(ctx, err, w)
+				return
 			}
 
 			if !allowed {
 				limiter.logger.WarnContext(ctx, "rate limit exceeded", "userID", userID, "key", key, "rps", limiter.rps, "burst", limiter.burst)
-				return nil, errors.ErrRateLimitExceeded
+				errors.EncodeError(ctx, errors.ErrRateLimitExceeded, w)
+				return
 			}
 
 			limiter.logger.InfoContext(ctx, "rate limit allowed", "userID", userID, "key", key)
-			return next(ctx, request)
-		}
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 

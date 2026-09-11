@@ -6,13 +6,14 @@ import (
 	"os"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 )
 
 type OTelSlogLogger struct {
-	slog   *slog.Logger
-	otel   log.Logger
+	slog *slog.Logger
+	otel log.Logger
 }
 
 func NewOTelSlogLogger(serviceName string) *OTelSlogLogger {
@@ -42,7 +43,7 @@ func (l *OTelSlogLogger) Log(keyvals ...interface{}) error {
 
 		switch key {
 		case "msg":
-			record.SetBody(log.StringValue(str))
+			record.SetBody(attribute.StringValue(str))
 		case "level":
 			switch str {
 			case "error":
@@ -53,7 +54,7 @@ func (l *OTelSlogLogger) Log(keyvals ...interface{}) error {
 				record.SetSeverity(log.SeverityInfo)
 			}
 		default:
-			record.AddAttributes(log.String(key, str))
+			record.AddAttributes(attribute.String(key, str))
 		}
 		args = append(args, slog.Any(key, val))
 	}
