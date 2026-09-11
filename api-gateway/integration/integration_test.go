@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/huzaifa678/SAAS-services/endpoint"
 	"github.com/huzaifa678/SAAS-services/interceptor"
+	"github.com/huzaifa678/SAAS-services/middleware"
 	"github.com/huzaifa678/SAAS-services/service"
 	"github.com/huzaifa678/SAAS-services/transport"
 	"github.com/huzaifa678/SAAS-services/utils"
@@ -49,17 +49,12 @@ func buildMux(authURL, subURL, billURL string) http.Handler {
 	subSvc := service.NewForwardService(subURL, "sub-service", "sub unavailable", cbCfg, nopLogger)
 	billSvc := service.NewForwardService(billURL, "bill-service", "bill unavailable", cbCfg, nopLogger)
 
-	authEp := endpoint.MakeAuthEndpoint(authSvc)
-	subEp := endpoint.MakeSubscriptionEndpoint(subSvc)
-	billEp := endpoint.MakeBillingEndpoint(billSvc)
-
-	subEp = interceptor.JWTMiddleware(jwtSecret)(subEp)
-	billEp = interceptor.JWTMiddleware(jwtSecret)(billEp)
+	jwt := interceptor.JWTMiddleware(jwtSecret)
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/auth/", transport.NewGraphQLHTTPHandler(authEp))
-	mux.Handle("/api/subscription/", transport.NewGraphQLHTTPHandler(subEp))
-	mux.Handle("/api/billing/", transport.NewRESTHTTPHandler(billEp, nopLogger))
+	mux.Handle("/api/auth/", transport.NewHandler(authSvc))
+	mux.Handle("/api/subscription/", jwt(transport.NewHandler(subSvc)))
+	mux.Handle("/api/billing/", jwt(transport.NewHandler(billSvc)))
 
 	return transport.CORSMiddleware([]string{"http://localhost:3000"})(mux)
 }
@@ -242,11 +237,10 @@ func TestIntegration_RateLimit_Redis(t *testing.T) {
 	defer upstream.Close()
 
 	authSvc := service.NewForwardService(upstream.URL, "auth-service", "auth unavailable", cbCfg, nopLogger)
-	authEp := endpoint.MakeAuthEndpoint(authSvc)
-	authEp = endpoint.RateLimitMiddleware(rc, 2, 2, "integ-auth", nopLogger, 30*time.Second)(authEp)
+	authHandler := middleware.RateLimit(rc, 2, 2, "integ-auth", nopLogger, 30*time.Second)(transport.NewHandler(authSvc))
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/auth/", transport.NewGraphQLHTTPHandler(authEp))
+	mux.Handle("/api/auth/", authHandler)
 	gw := httptest.NewServer(mux)
 	defer gw.Close()
 
@@ -268,6 +262,47 @@ func TestIntegration_RateLimit_Redis(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 rate limit, got %d", resp.StatusCode)
+	}
+}
+
+// --- Response caching (requires real Redis) ---
+
+func TestIntegration_Cache_GET(t *testing.T) {
+	rc := redis.NewClient(&redis.Options{Addr: redisAddr})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available at %s: %v", redisAddr, err)
+	}
+	defer rc.Close()
+	rc.FlushDB(context.Background())
+
+	var hits int
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"data":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	svc := service.NewCachingProxy(
+		service.NewForwardService(upstream.URL, "bill-service", "bill unavailable", cbCfg, nopLogger),
+		rc, 30*time.Second,
+	)
+
+	auth := http.Header{"Authorization": {"Bearer user1"}}
+
+	// First GET reaches the backend and is cached.
+	svc.Forward(context.Background(), nil, auth, "/api/billing/invoices", http.MethodGet)
+	// Second identical GET is served from cache.
+	svc.Forward(context.Background(), nil, auth, "/api/billing/invoices", http.MethodGet)
+	if hits != 1 {
+		t.Fatalf("expected backend hit once (cached), got %d", hits)
+	}
+
+	// A different caller must not read the first caller's cache.
+	other := http.Header{"Authorization": {"Bearer user2"}}
+	svc.Forward(context.Background(), nil, other, "/api/billing/invoices", http.MethodGet)
+	if hits != 2 {
+		t.Fatalf("expected separate cache per caller, got %d hits", hits)
 	}
 }
 

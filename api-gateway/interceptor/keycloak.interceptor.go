@@ -2,18 +2,20 @@ package interceptor
 
 import (
 	"context"
-	"errors"
+	stderrors "errors"
+	"net/http"
 	"strings"
 
 	"github.com/MicahParks/keyfunc/v2"
-	kitendpoint "github.com/go-kit/kit/endpoint"
 	"github.com/golang-jwt/jwt/v5"
-	endpoint "github.com/huzaifa678/SAAS-services/endpoint"
+	"github.com/huzaifa678/SAAS-services/errors"
 )
 
 type contextKey string
 
 const UserClaimsKey contextKey = "user"
+
+var errUnauthorized = stderrors.New("unauthorized")
 
 type KeycloakClaims struct {
 	PreferredUsername string `json:"preferred_username"`
@@ -21,39 +23,34 @@ type KeycloakClaims struct {
 	jwt.RegisteredClaims
 }
 
-func KeycloakMiddleware(jwksURL string) (kitendpoint.Middleware, error) {
+// KeycloakMiddleware validates the request's bearer token against the Keycloak
+// JWKS and stores the parsed claims in the request context. It is a standard
+// net/http middleware; an unauthorized request is rejected before it reaches
+// the downstream handler.
+func KeycloakMiddleware(jwksURL string) (func(http.Handler) http.Handler, error) {
 	jwks, err := keyfunc.Get(jwksURL, keyfunc.Options{})
 	if err != nil {
 		return nil, err
 	}
 
-	return func(next kitendpoint.Endpoint) kitendpoint.Endpoint {
-		return func(ctx context.Context, request interface{}) (interface{}, error) {
-			// Expecting ForwardRequest from your endpoints
-			req, ok := request.(endpoint.ForwardRequest)
-			if !ok {
-				return nil, errors.New("invalid request type, expected ForwardRequest")
-			}
-
-			authHeader := ""
-
-			if vals, ok := req.Header["Authorization"]; ok && len(vals) > 0 {
-				authHeader = vals[0]
-			}
-
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
 			if !strings.HasPrefix(authHeader, "Bearer ") {
-				return nil, errors.New("unauthorized")
+				errors.EncodeError(r.Context(), errUnauthorized, w)
+				return
 			}
 
 			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 			claims := &KeycloakClaims{}
 			token, err := jwt.ParseWithClaims(tokenStr, claims, jwks.Keyfunc)
 			if err != nil || !token.Valid {
-				return nil, errors.New("unauthorized")
+				errors.EncodeError(r.Context(), errUnauthorized, w)
+				return
 			}
 
-			ctx = context.WithValue(ctx, UserClaimsKey, claims)
-			return next(ctx, request)
-		}
+			ctx := context.WithValue(r.Context(), UserClaimsKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}, nil
 }

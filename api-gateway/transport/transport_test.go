@@ -2,12 +2,11 @@ package transport
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/huzaifa678/SAAS-services/endpoint"
 )
 
 func TestCORSMiddleware_AllowedOrigin(t *testing.T) {
@@ -77,73 +76,51 @@ func TestCORSMiddleware_Preflight(t *testing.T) {
 	}
 }
 
-func TestDecodeRESTRequest(t *testing.T) {
-	body := `{"key":"value"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/billing/invoices", strings.NewReader(body))
+type fakeForwarder struct {
+	gotBody   []byte
+	gotPath   string
+	gotMethod string
+	gotAuth   string
+
+	respBody   []byte
+	respStatus int
+	respErr    error
+}
+
+func (f *fakeForwarder) Forward(_ context.Context, body []byte, headers http.Header, path, method string) ([]byte, int, error) {
+	f.gotBody = body
+	f.gotPath = path
+	f.gotMethod = method
+	f.gotAuth = headers.Get("Authorization")
+	return f.respBody, f.respStatus, f.respErr
+}
+
+func TestNewHandler_ForwardsRequestAndWritesResponse(t *testing.T) {
+	fake := &fakeForwarder{respBody: []byte(`{"ok":true}`), respStatus: http.StatusCreated}
+	h := NewHandler(fake)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/billing/invoices", strings.NewReader(`{"key":"value"}`))
 	req.Header.Set("Authorization", "Bearer token123")
-
-	result, err := DecodeRESTRequest(context.TODO(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	fr := result.(endpoint.ForwardRequest)
-	if string(fr.Body) != body {
-		t.Fatalf("expected body %q, got %q", body, string(fr.Body))
-	}
-	if fr.Method != http.MethodPost {
-		t.Fatalf("expected method POST, got %q", fr.Method)
-	}
-	if fr.Path != "/api/billing/invoices" {
-		t.Fatalf("expected path /api/billing/invoices, got %q", fr.Path)
-	}
-	if fr.Header["Authorization"][0] != "Bearer token123" {
-		t.Fatalf("expected Authorization header forwarded")
-	}
-}
-
-func TestDecodeGraphQLRequest(t *testing.T) {
-	body := `{"query":"{ user { id } }"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	result, err := DecodeGraphQLRequest(context.TODO(), req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	fr := result.(endpoint.ForwardRequest)
-	if string(fr.Body) != body {
-		t.Fatalf("expected body %q, got %q", body, string(fr.Body))
-	}
-	if fr.Path != "/api/auth/" {
-		t.Fatalf("expected path /api/auth/, got %q", fr.Path)
-	}
-}
-
-func TestEncodeRESTRequest_WithError(t *testing.T) {
 	rr := httptest.NewRecorder()
-	resp := endpoint.ForwardResponse{Error: "service unavailable", Status: 503}
-	err := EncodeRESTRequest(context.TODO(), rr, resp)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rr.Code)
-	}
-}
 
-func TestEncodeRESTRequest_Success(t *testing.T) {
-	rr := httptest.NewRecorder()
-	resp := endpoint.ForwardResponse{Body: []byte(`{"ok":true}`), Status: 200}
-	err := EncodeRESTRequest(context.TODO(), rr, resp)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected upstream status 201, got %d", rr.Code)
 	}
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+	if body, _ := io.ReadAll(rr.Body); string(body) != `{"ok":true}` {
+		t.Fatalf("unexpected response body: %q", string(body))
 	}
-	if rr.Body.String() != `{"ok":true}` {
-		t.Fatalf("unexpected body: %q", rr.Body.String())
+	if string(fake.gotBody) != `{"key":"value"}` {
+		t.Fatalf("body not forwarded: got %q", string(fake.gotBody))
+	}
+	if fake.gotMethod != http.MethodPost || fake.gotPath != "/api/billing/invoices" {
+		t.Fatalf("method/path not forwarded: %s %s", fake.gotMethod, fake.gotPath)
+	}
+	if fake.gotAuth != "Bearer token123" {
+		t.Fatalf("auth header not forwarded: %q", fake.gotAuth)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected application/json content type, got %q", ct)
 	}
 }
