@@ -39,7 +39,7 @@ jobs:
           checkov -d . --framework dockerfile,secrets --config-file .checkov.yaml
 
       - name: Trivy config (Dockerfile/IaC misconfiguration, report)
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -49,7 +49,7 @@ jobs:
           TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
 
       - name: Trivy fs (dependency vulnerabilities, gate on CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@0.35.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
