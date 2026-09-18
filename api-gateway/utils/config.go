@@ -56,6 +56,10 @@ type Config struct {
 		Billing struct {
 			URL string `mapstructure:"url"`
 		} `mapstructure:"billing"`
+
+		Agent struct {
+			URL string `mapstructure:"url"`
+		} `mapstructure:"agent"`
 	} `mapstructure:"services"`
 
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuitBreaker"`

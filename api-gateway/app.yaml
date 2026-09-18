@@ -10,6 +10,8 @@ services:
     url: http://localhost:8081
   billing:
     url:  http://localhost:8082
+  agent:
+    url: http://localhost:8083
 
 keycloak:
   jwksURL: http://localhost:8180/realms/saas/protocol/openid-connect/certs
