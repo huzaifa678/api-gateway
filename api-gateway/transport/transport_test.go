@@ -99,7 +99,7 @@ func TestNewHandler_ForwardsRequestAndWritesResponse(t *testing.T) {
 	fake := &fakeForwarder{respBody: []byte(`{"ok":true}`), respStatus: http.StatusCreated}
 	h := NewHandler(fake)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/billing/invoices", strings.NewReader(`{"key":"value"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/billing/invoices", strings.NewReader(`{"key":"value"}`))
 	req.Header.Set("Authorization", "Bearer token123")
 	rr := httptest.NewRecorder()
 
@@ -114,7 +114,7 @@ func TestNewHandler_ForwardsRequestAndWritesResponse(t *testing.T) {
 	if string(fake.gotBody) != `{"key":"value"}` {
 		t.Fatalf("body not forwarded: got %q", string(fake.gotBody))
 	}
-	if fake.gotMethod != http.MethodPost || fake.gotPath != "/api/billing/invoices" {
+	if fake.gotMethod != http.MethodPost || fake.gotPath != "/api/v1/billing/invoices" {
 		t.Fatalf("method/path not forwarded: %s %s", fake.gotMethod, fake.gotPath)
 	}
 	if fake.gotAuth != "Bearer token123" {
