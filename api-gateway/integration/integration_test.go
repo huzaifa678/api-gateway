@@ -44,17 +44,19 @@ func makeJWT(userID string) string {
 }
 
 // buildMux wires up the full gateway mux against the provided upstream test servers.
-func buildMux(authURL, subURL, billURL string) http.Handler {
+func buildMux(authURL, subURL, billURL, agentURL string) http.Handler {
 	authSvc := service.NewForwardService(authURL, "auth-service", "auth unavailable", cbCfg, nopLogger)
 	subSvc := service.NewForwardService(subURL, "sub-service", "sub unavailable", cbCfg, nopLogger)
 	billSvc := service.NewForwardService(billURL, "bill-service", "bill unavailable", cbCfg, nopLogger)
+	agentSvc := service.NewForwardService(agentURL, "agent-service", "agent unavailable", cbCfg, nopLogger)
 
 	jwt := interceptor.JWTMiddleware(jwtSecret)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", transport.NewHandler(authSvc))
 	mux.Handle("/api/subscription/", jwt(transport.NewHandler(subSvc)))
-	mux.Handle("/api/billing/", jwt(transport.NewHandler(billSvc)))
+	mux.Handle("/api/v1/billing/", jwt(transport.NewHandler(billSvc)))
+	mux.Handle("/api/v1/agent/", jwt(transport.NewHandler(agentSvc)))
 
 	return transport.CORSMiddleware([]string{"http://localhost:3000"})(mux)
 }
@@ -68,7 +70,7 @@ func TestIntegration_AuthForward(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	resp, err := http.Post(gw.URL+"/api/auth/", "application/json", strings.NewReader(`{"query":"mutation { login }"}`))
@@ -86,7 +88,7 @@ func TestIntegration_AuthForward_UpstreamError(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	resp, err := http.Post(gw.URL+"/api/auth/", "application/json", strings.NewReader(`{}`))
@@ -101,7 +103,7 @@ func TestIntegration_AuthForward_UpstreamError(t *testing.T) {
 // --- Subscription (JWT required) ---
 
 func TestIntegration_SubscriptionForward_NoJWT(t *testing.T) {
-	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	// endpoint returns an error (unauthorized) → EncodeError → 500
@@ -121,7 +123,7 @@ func TestIntegration_SubscriptionForward_WithJWT(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := httptest.NewServer(buildMux("http://localhost:19990", upstream.URL, "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux("http://localhost:19990", upstream.URL, "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/api/subscription/", strings.NewReader(`{"query":"{ subscription }"}`))
@@ -140,11 +142,11 @@ func TestIntegration_SubscriptionForward_WithJWT(t *testing.T) {
 // --- Billing (JWT required, REST) ---
 
 func TestIntegration_BillingForward_NoJWT(t *testing.T) {
-	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	// endpoint returns an error (unauthorized) → EncodeError → 500
-	resp, err := http.Get(gw.URL + "/api/billing/invoices")
+	resp, err := http.Get(gw.URL + "/api/v1/billing/invoices")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,10 +162,48 @@ func TestIntegration_BillingForward_WithJWT(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", upstream.URL))
+	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", upstream.URL, "http://localhost:19993"))
 	defer gw.Close()
 
-	req, _ := http.NewRequest(http.MethodGet, gw.URL+"/api/billing/invoices", nil)
+	req, _ := http.NewRequest(http.MethodGet, gw.URL+"/api/v1/billing/invoices", nil)
+	req.Header.Set("Authorization", "Bearer "+makeJWT("user1"))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// --- Agent (JWT required, REST) ---
+
+func TestIntegration_AgentForward_NoJWT(t *testing.T) {
+	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
+	defer gw.Close()
+
+	// endpoint returns an error (unauthorized) → EncodeError → 500
+	resp, err := http.Get(gw.URL + "/api/v1/agent/conversations/c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 (endpoint error from missing JWT), got %d", resp.StatusCode)
+	}
+}
+
+func TestIntegration_AgentForward_WithJWT(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"c1","messages":[]}`))
+	}))
+	defer upstream.Close()
+
+	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992", upstream.URL))
+	defer gw.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, gw.URL+"/api/v1/agent/conversations/c1", nil)
 	req.Header.Set("Authorization", "Bearer "+makeJWT("user1"))
 
 	resp, err := http.DefaultClient.Do(req)
@@ -201,7 +241,7 @@ func TestIntegration_CircuitBreaker_FallbackOnUnreachable(t *testing.T) {
 // --- CORS ---
 
 func TestIntegration_CORS_Preflight(t *testing.T) {
-	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux("http://localhost:19990", "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	req, _ := http.NewRequest(http.MethodOptions, gw.URL+"/api/auth/", nil)
@@ -291,16 +331,16 @@ func TestIntegration_Cache_GET(t *testing.T) {
 	auth := http.Header{"Authorization": {"Bearer user1"}}
 
 	// First GET reaches the backend and is cached.
-	svc.Forward(context.Background(), nil, auth, "/api/billing/invoices", http.MethodGet)
+	svc.Forward(context.Background(), nil, auth, "/api/v1/billing/invoices", http.MethodGet)
 	// Second identical GET is served from cache.
-	svc.Forward(context.Background(), nil, auth, "/api/billing/invoices", http.MethodGet)
+	svc.Forward(context.Background(), nil, auth, "/api/v1/billing/invoices", http.MethodGet)
 	if hits != 1 {
 		t.Fatalf("expected backend hit once (cached), got %d", hits)
 	}
 
 	// A different caller must not read the first caller's cache.
 	other := http.Header{"Authorization": {"Bearer user2"}}
-	svc.Forward(context.Background(), nil, other, "/api/billing/invoices", http.MethodGet)
+	svc.Forward(context.Background(), nil, other, "/api/v1/billing/invoices", http.MethodGet)
 	if hits != 2 {
 		t.Fatalf("expected separate cache per caller, got %d hits", hits)
 	}
@@ -317,7 +357,7 @@ func TestIntegration_HeadersPropagatedToUpstream(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, gw.URL+"/api/auth/", strings.NewReader(`{}`))
@@ -341,7 +381,7 @@ func TestIntegration_ResponseBodyPassthrough(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992"))
+	gw := httptest.NewServer(buildMux(upstream.URL, "http://localhost:19991", "http://localhost:19992", "http://localhost:19993"))
 	defer gw.Close()
 
 	resp, err := http.Post(gw.URL+"/api/auth/", "application/json", strings.NewReader(`{"query":"{ user }"}`))

@@ -61,7 +61,7 @@ paths:
       tags:
       - Auth
       - Subscription
-  /api/billing/{path}:
+  /api/v1/billing/{path}:
     delete:
       consumes:
       - application/json
@@ -226,6 +226,171 @@ paths:
       summary: Billing REST endpoint
       tags:
       - Billing
+  /api/v1/agent/{path}:
+    delete:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Agent Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic agent route path
+        in: path
+        name: path
+        type: string
+      - description: Agent request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Agent REST endpoint
+      tags:
+      - Agent
+    get:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Agent Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic agent route path
+        in: path
+        name: path
+        type: string
+      - description: Agent request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Agent REST endpoint
+      tags:
+      - Agent
+    post:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Agent Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic agent route path
+        in: path
+        name: path
+        type: string
+      - description: Agent request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Agent REST endpoint
+      tags:
+      - Agent
+    put:
+      consumes:
+      - application/json
+      description: Forwards REST requests to Agent Service through API Gateway
+      parameters:
+      - description: Bearer JWT token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Dynamic agent route path
+        in: path
+        name: path
+        type: string
+      - description: Agent request payload
+        in: body
+        name: request
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/endpoint.ForwardResponseSwagger'
+      summary: Agent REST endpoint
+      tags:
+      - Agent
   /api/subscription/:
     post:
       consumes:
