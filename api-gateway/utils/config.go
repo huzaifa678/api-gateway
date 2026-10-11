@@ -60,6 +60,10 @@ type Config struct {
 		Agent struct {
 			URL string `mapstructure:"url"`
 		} `mapstructure:"agent"`
+
+		Usage struct {
+			URL string `mapstructure:"url"`
+		} `mapstructure:"usage"`
 	} `mapstructure:"services"`
 
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuitBreaker"`

@@ -42,7 +42,7 @@ func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler 
 
 // @title SAAS API Gateway
 // @version 1.0
-// @description API Gateway for Auth, Subscription, Billing and Agent Services
+// @description API Gateway for Auth, Subscription, Billing, Agent and Usage Services
 // @host localhost:9000
 // @BasePath /
 func main() {
@@ -85,6 +85,7 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 	authSvc := service.NewForwardService(cfg.Services.Auth.URL, "auth-service", "Auth service temporarily unavailable", cfg.CircuitBreaker, logger)
 	billSvc := service.NewForwardService(cfg.Services.Billing.URL, "billing-service", "Billing service temporarily unavailable", cfg.CircuitBreaker, logger)
 	agentSvc := service.NewForwardService(cfg.Services.Agent.URL, "agent-service", "Agent service temporarily unavailable", cfg.CircuitBreaker, logger)
+	usageSvc := service.NewForwardService(cfg.Services.Usage.URL, "usage-service", "Usage service temporarily unavailable", cfg.CircuitBreaker, logger)
 
 	// Cache proxy sits outermost: a GET hit skips the breaker and upstream
 	cacheTTL := time.Duration(cfg.Cache.TTLSeconds) * time.Second
@@ -92,6 +93,7 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 	authSvc = service.NewCachingProxy(authSvc, redisClient, cacheTTL)
 	billSvc = service.NewCachingProxy(billSvc, redisClient, cacheTTL)
 	agentSvc = service.NewCachingProxy(agentSvc, redisClient, cacheTTL)
+	usageSvc = service.NewCachingProxy(usageSvc, redisClient, cacheTTL)
 
 	authMW, err := interceptor.KeycloakMiddleware(keycloakJWKSURL)
 	if err != nil {
@@ -122,12 +124,19 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 		middleware.RateLimit(redisClient, 5, 3, "agent", logger, 30*time.Second),
 		middleware.Logging(logger),
 	)
+	usageHandler := chain(transport.NewHandler(usageSvc),
+		middleware.Tracing("UsageEndpoint"),
+		authMW,
+		middleware.RateLimit(redisClient, 5, 3, "usage", logger, 30*time.Second),
+		middleware.Logging(logger),
+	)
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/auth/", authHandler)
 	mux.Handle("/api/subscription/", subHandler)
 	mux.Handle("/api/v1/billing/", billHandler)
 	mux.Handle("/api/v1/agent/", agentHandler)
+	mux.Handle("/api/v1/usage/", usageHandler)
 	// Swagger UI / OpenAPI is exposed only in dev — never in staging/prod, where
 	// publishing the API surface widens the attack surface. Env comes from
 	// GATEWAY_APP_ENV (see app.yaml / the Helm chart); anything but "dev" hides it.
