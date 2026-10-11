@@ -4,13 +4,25 @@ on:
   pull_request:
     branches: [main]
     paths: [api-gateway/**]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Immutable ECR tag to promote to STAGING (e.g. sha-<commit>)"
+        required: true
+        type: string
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # prod (the pull_request leg) is gated by the `production` GitHub Environment
+    # (required reviewers); staging (workflow_dispatch) runs ungated.
+    environment: ${{ github.event_name == 'pull_request' && 'production' || '' }}
     permissions:
       id-token: write
       contents: read
+    env:
+      TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && 'staging' || 'prod' }}
+      PROMOTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.image_tag || 'prod' }}
 
     steps:
       - name: Generate GitHub App token
@@ -40,7 +52,9 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      # PROD (PR to main): retag the CI build sha -> floating `prod` tag.
       - name: Retag sha → prod
+        if: github.event_name == 'pull_request'
         run: |
           MANIFEST=$(aws ecr batch-get-image --repository-name api-gateway \
             --image-ids imageTag=sha-${{ github.sha }} \
@@ -48,9 +62,20 @@ jobs:
           aws ecr put-image --repository-name api-gateway \
             --image-tag prod --image-manifest "$MANIFEST"
 
-      - name: Update ArgoCD values-prod.yaml
+      # STAGING (manual dispatch): verify the immutable tag exists (pin, no retag).
+      - name: Verify staging image tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          aws ecr describe-images --repository-name api-gateway \
+            --image-ids imageTag="$IMAGE_TAG" >/dev/null \
+            || { echo "::error::image tag '$IMAGE_TAG' not found in ECR repo 'api-gateway'."; exit 1; }
+
+      - name: Update ArgoCD values-${{ env.TARGET_ENV }}.yaml
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ECR_URL: ${{ steps.ecr.outputs.url }}
         run: |
           git clone https://x-access-token:${GH_TOKEN}@github.com/huzaifa678/SAAS-Continious-Delivery.git /tmp/cd
           cd /tmp/cd
@@ -59,7 +84,8 @@ jobs:
             https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
           chmod +x /usr/local/bin/yq
 
-          yq -i '.image.apiGateway = "${{ steps.ecr.outputs.url }}:prod"' saas-chart/values-prod.yaml
+          yq -i '.image.repository = strenv(ECR_URL)' "saas-chart/values-${TARGET_ENV}.yaml"
+          yq -i '.image.tag = strenv(PROMOTED_TAG)' "saas-chart/values-${TARGET_ENV}.yaml"
 
       - name: Commit and Push
         env:
@@ -68,6 +94,10 @@ jobs:
           cd /tmp/cd
           git config user.email "${{ steps.app-token.outputs.installation-id }}+saas-gitops-bot[bot]@users.noreply.github.com"
           git config user.name "SAAS-gitops-bot[bot]"
-          git add saas-chart/values-prod.yaml
-          git commit -m "cd(api-gateway): promote sha-${{ github.sha }} to prod"
+          git add "saas-chart/values-${TARGET_ENV}.yaml"
+          if git diff --cached --quiet; then
+            echo "values-${TARGET_ENV}.yaml already at ${PROMOTED_TAG} — nothing to commit."
+            exit 0
+          fi
+          git commit -m "cd(api-gateway): promote ${PROMOTED_TAG} to ${TARGET_ENV}"
           git push
