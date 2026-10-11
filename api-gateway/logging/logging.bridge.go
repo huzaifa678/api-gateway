@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 )
 
 type OTelSlogLogger struct {
@@ -20,7 +20,7 @@ func NewOTelSlogLogger(serviceName string) *OTelSlogLogger {
 	sl := slog.New(slog.NewTextHandler(os.Stdout, nil)).With("service", serviceName)
 	return &OTelSlogLogger{
 		slog: sl,
-		otel: global.GetLoggerProvider().Logger(serviceName),
+		otel: otel.GetLoggerProvider().Logger(serviceName),
 	}
 }
 

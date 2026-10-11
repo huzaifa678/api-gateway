@@ -9,7 +9,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otellog "go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
@@ -63,8 +62,8 @@ func InitTracer(serviceName string) func(context.Context) error {
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
 		sdklog.WithResource(res),
 	)
-	global.SetLoggerProvider(lp)
-	otelLogger = global.GetLoggerProvider().Logger(serviceName)
+	otel.SetLoggerProvider(lp)
+	otelLogger = otel.GetLoggerProvider().Logger(serviceName)
 
 	return func(ctx context.Context) error {
 		_ = lp.Shutdown(ctx)

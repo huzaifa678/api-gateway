@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
@@ -37,6 +37,6 @@ func InitLogger(ctx context.Context, serviceName string) func(context.Context) e
 		sdklog.WithResource(res),
 	)
 
-	global.SetLoggerProvider(provider)
+	otel.SetLoggerProvider(provider)
 	return provider.Shutdown
 }
