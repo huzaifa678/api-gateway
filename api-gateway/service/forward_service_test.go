@@ -30,10 +30,10 @@ func (c *countingForwarder) Forward(_ context.Context, _ []byte, _ http.Header, 
 // NewCachingProxy returns next unchanged when caching is off.
 func TestNewCachingProxy_DisabledIsPassthrough(t *testing.T) {
 	var next ForwardService = &countingForwarder{}
-	if NewCachingProxy(next, nil, time.Minute) != next {
+	if NewCachingProxy(next, nil, time.Minute, nopLogger) != next {
 		t.Fatal("nil client should return next unchanged")
 	}
-	if NewCachingProxy(next, nil, 0) != next {
+	if NewCachingProxy(next, nil, 0, nopLogger) != next {
 		t.Fatal("ttl <= 0 should return next unchanged")
 	}
 }
@@ -41,7 +41,7 @@ func TestNewCachingProxy_DisabledIsPassthrough(t *testing.T) {
 // Non-GET methods bypass the cache entirely (Redis is never touched).
 func TestCacheProxy_NonGetBypassesCache(t *testing.T) {
 	backend := &countingForwarder{}
-	p := &cacheProxy{next: backend, rdb: nil, ttl: time.Minute}
+	p := &cacheProxy{next: backend, rdb: nil, softTTL: time.Minute, logger: nopLogger}
 
 	_, _, err := p.Forward(context.Background(), []byte(`{}`), http.Header{}, "/x", http.MethodPost)
 	if err != nil {

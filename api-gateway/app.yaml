@@ -39,3 +39,7 @@ circuitBreaker:
 
 cache:
   ttlSeconds: 30   # GET response cache TTL; 0 disables caching
+
+idempotency:
+  ttlSeconds: 86400     # how long a completed response stays replayable (24h)
+  lockTTLSeconds: 30    # in-flight lock expiry; also the deadlock guard

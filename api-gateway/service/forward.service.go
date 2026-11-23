@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/sony/gobreaker"
 	"go.opentelemetry.io/otel"
@@ -14,7 +15,6 @@ import (
 	"github.com/huzaifa678/SAAS-services/circuit"
 	"github.com/huzaifa678/SAAS-services/utils"
 )
-
 
 type ForwardService interface {
 	Forward(ctx context.Context, body []byte, headers http.Header, path, method string) ([]byte, int, error)
@@ -92,10 +92,23 @@ func NewForwardService(
 	cbCfg utils.CircuitBreakerConfig,
 	logger *slog.Logger,
 ) ForwardService {
+	// Timeout mechanism so that the gateway does not hang on a slow upstream
+	// and times out allowing the stalled backend to fail fast and for the goroutines
+	// and sockets to not pile up and exhaust the gateway.
 	real := &httpForwarder{
 		baseURL: baseURL,
-		client:  &http.Client{},
-		logger:  logger,
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:          100,
+				MaxIdleConnsPerHost:   20,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   5 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
+		logger: logger,
 	}
 
 	return &breakerProxy{

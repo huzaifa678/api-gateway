@@ -40,6 +40,14 @@ func chain(h http.Handler, mws ...func(http.Handler) http.Handler) http.Handler 
 	return h
 }
 
+// orDefault returns v when it's positive, otherwise def.
+func orDefault(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
+}
+
 // @title SAAS API Gateway
 // @version 1.0
 // @description API Gateway for Auth, Subscription, Billing, Agent and Usage Services
@@ -89,11 +97,11 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 
 	// Cache proxy sits outermost: a GET hit skips the breaker and upstream
 	cacheTTL := time.Duration(cfg.Cache.TTLSeconds) * time.Second
-	subSvc = service.NewCachingProxy(subSvc, redisClient, cacheTTL)
-	authSvc = service.NewCachingProxy(authSvc, redisClient, cacheTTL)
-	billSvc = service.NewCachingProxy(billSvc, redisClient, cacheTTL)
-	agentSvc = service.NewCachingProxy(agentSvc, redisClient, cacheTTL)
-	usageSvc = service.NewCachingProxy(usageSvc, redisClient, cacheTTL)
+	subSvc = service.NewCachingProxy(subSvc, redisClient, cacheTTL, logger)
+	authSvc = service.NewCachingProxy(authSvc, redisClient, cacheTTL, logger)
+	billSvc = service.NewCachingProxy(billSvc, redisClient, cacheTTL, logger)
+	agentSvc = service.NewCachingProxy(agentSvc, redisClient, cacheTTL, logger)
+	usageSvc = service.NewCachingProxy(usageSvc, redisClient, cacheTTL, logger)
 
 	authMW, err := interceptor.KeycloakMiddleware(keycloakJWKSURL)
 	if err != nil {
@@ -101,34 +109,44 @@ func runHTTP(ctx context.Context, waitGroup *errgroup.Group, cfg *utils.Config, 
 		return
 	}
 
+	// Idempotency dedupes retried POSTs that carry an Idempotency-Key header.
+	idemTTL := time.Duration(orDefault(cfg.Idempotency.TTLSeconds, 86400)) * time.Second
+	idemLockTTL := time.Duration(orDefault(cfg.Idempotency.LockTTLSeconds, 30)) * time.Second
+	idempotency := middleware.Idempotency(redisClient, idemTTL, idemLockTTL, logger)
+
 	authHandler := chain(transport.NewHandler(authSvc),
 		middleware.Tracing("AuthEndpoint"),
 		middleware.RateLimit(redisClient, 10, 5, "auth", logger, 30*time.Second),
 		middleware.Logging(logger),
+		idempotency,
 	)
 	subHandler := chain(transport.NewHandler(subSvc),
 		middleware.Tracing("SubscriptionEndpoint"),
 		authMW,
 		middleware.RateLimit(redisClient, 5, 3, "sub", logger, 30*time.Second),
 		middleware.Logging(logger),
+		idempotency,
 	)
 	billHandler := chain(transport.NewHandler(billSvc),
 		middleware.Tracing("BillingEndpoint"),
 		authMW,
 		middleware.RateLimit(redisClient, 5, 3, "bill", logger, 30*time.Second),
 		middleware.Logging(logger),
+		idempotency,
 	)
 	agentHandler := chain(transport.NewHandler(agentSvc),
 		middleware.Tracing("AgentEndpoint"),
 		authMW,
 		middleware.RateLimit(redisClient, 5, 3, "agent", logger, 30*time.Second),
 		middleware.Logging(logger),
+		idempotency,
 	)
 	usageHandler := chain(transport.NewHandler(usageSvc),
 		middleware.Tracing("UsageEndpoint"),
 		authMW,
 		middleware.RateLimit(redisClient, 5, 3, "usage", logger, 30*time.Second),
 		middleware.Logging(logger),
+		idempotency,
 	)
 
 	mux := http.NewServeMux()
