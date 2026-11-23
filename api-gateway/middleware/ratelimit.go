@@ -22,7 +22,6 @@ type RedisRateLimiter struct {
 	ttl            time.Duration
 }
 
-
 // Replaces the go-kit RateLimitMiddleware
 func RateLimit(redisClient *redis.Client, rps int, burst int, keyPrefix string, logger *slog.Logger, ttl time.Duration) func(http.Handler) http.Handler {
 	limiter := &RedisRateLimiter{
