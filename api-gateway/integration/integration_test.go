@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +22,17 @@ import (
 	"github.com/huzaifa678/SAAS-services/utils"
 	"github.com/redis/go-redis/v9"
 )
+
+// redisOrSkip returns a flushed Redis client or skips the test when none is up.
+func redisOrSkip(t *testing.T) *redis.Client {
+	t.Helper()
+	rc := redis.NewClient(&redis.Options{Addr: redisAddr})
+	if err := rc.Ping(context.Background()).Err(); err != nil {
+		t.Skipf("Redis not available at %s: %v", redisAddr, err)
+	}
+	rc.FlushDB(context.Background())
+	return rc
+}
 
 const (
 	jwtSecret = "integration-secret"
@@ -325,7 +338,7 @@ func TestIntegration_Cache_GET(t *testing.T) {
 
 	svc := service.NewCachingProxy(
 		service.NewForwardService(upstream.URL, "bill-service", "bill unavailable", cbCfg, nopLogger),
-		rc, 30*time.Second,
+		rc, 30*time.Second, nopLogger,
 	)
 
 	auth := http.Header{"Authorization": {"Bearer user1"}}
@@ -394,5 +407,93 @@ func TestIntegration_ResponseBodyPassthrough(t *testing.T) {
 
 	if _, ok := result["data"]; !ok {
 		t.Fatalf("expected 'data' key in response, got %v", result)
+	}
+}
+
+// --- Idempotency (requires real Redis) ---
+
+func TestIntegration_Idempotency_ReplaysResult(t *testing.T) {
+	rc := redisOrSkip(t)
+	defer rc.Close()
+
+	var hits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprintf(w, `{"charge":%d}`, n)
+	}))
+	defer upstream.Close()
+
+	svc := service.NewForwardService(upstream.URL, "bill-service", "bill unavailable", cbCfg, nopLogger)
+	h := middleware.Idempotency(rc, time.Hour, 30*time.Second, nopLogger)(transport.NewHandler(svc))
+	gw := httptest.NewServer(h)
+	defer gw.Close()
+
+	do := func(key, body string) (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, gw.URL+"/api/billing/charge", strings.NewReader(body))
+		req.Header.Set("Idempotency-Key", key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+
+	// Same key + same body twice: backend runs once, both responses identical.
+	s1, b1 := do("key-1", `{"amount":100}`)
+	s2, b2 := do("key-1", `{"amount":100}`)
+	if s1 != http.StatusCreated || s2 != http.StatusCreated {
+		t.Fatalf("expected 201 both times, got %d and %d", s1, s2)
+	}
+	if b1 != b2 {
+		t.Fatalf("expected identical replayed body, got %q then %q", b1, b2)
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("expected backend hit once, got %d", n)
+	}
+
+	// Same key, different body: rejected as misuse.
+	if s, _ := do("key-1", `{"amount":999}`); s != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for key reuse with different body, got %d", s)
+	}
+}
+
+// --- Cache stampede (requires real Redis) ---
+
+func TestIntegration_Cache_StampedeCoalesced(t *testing.T) {
+	rc := redisOrSkip(t)
+	defer rc.Close()
+
+	var hits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		time.Sleep(150 * time.Millisecond) // slow enough that misses overlap
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"data":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	svc := service.NewCachingProxy(
+		service.NewForwardService(upstream.URL, "bill-service", "bill unavailable", cbCfg, nopLogger),
+		rc, 30*time.Second, nopLogger,
+	)
+
+	auth := http.Header{"Authorization": {"Bearer user1"}}
+	const n = 30
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			svc.Forward(context.Background(), nil, auth, "/api/billing/report", http.MethodGet)
+		}()
+	}
+	wg.Wait()
+
+	// singleflight collapses the concurrent misses on this instance to one call.
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("expected 1 upstream call under stampede, got %d", got)
 	}
 }
