@@ -21,6 +21,11 @@ type CacheConfig struct {
 	TTLSeconds int `mapstructure:"ttlSeconds"`
 }
 
+type IdempotencyConfig struct {
+	TTLSeconds     int `mapstructure:"ttlSeconds"`     // how long completed responses are replayable
+	LockTTLSeconds int `mapstructure:"lockTTLSeconds"` // in-flight lock expiry (deadlock guard)
+}
+
 type Config struct {
 	App struct {
 		Name string `mapstructure:"name"`
@@ -69,6 +74,7 @@ type Config struct {
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuitBreaker"`
 	CORS           CORSConfig           `mapstructure:"cors"`
 	Cache          CacheConfig          `mapstructure:"cache"`
+	Idempotency    IdempotencyConfig    `mapstructure:"idempotency"`
 }
 
 func Load() *Config {
